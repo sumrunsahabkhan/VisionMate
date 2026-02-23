@@ -1,12 +1,11 @@
 import { PollyClient, SynthesizeSpeechCommand } from "@aws-sdk/client-polly";
-import dotenv from "dotenv";
-dotenv.config();
+import { config } from "../config/env.js";
 
 const polly = new PollyClient({
-  region: process.env.AWS_REGION || "us-east-1",
+  region: config.aws.region,
   credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    accessKeyId: config.aws.accessKeyId,
+    secretAccessKey: config.aws.secretAccessKey,
   },
 });
 
@@ -14,7 +13,7 @@ export async function speakPolly(text) {
   const params = {
     Text: text,
     OutputFormat: "mp3",
-    VoiceId: "Joanna", // English US Female
+    VoiceId: "Joanna",
     LanguageCode: "en-US",
     Engine: "neural" 
   };

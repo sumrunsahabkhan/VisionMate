@@ -1,6 +1,5 @@
 import fetch from "node-fetch";
-import dotenv from "dotenv";
-dotenv.config();
+import { config } from "../config/env.js";
 
 let chatHistory = [];
 
@@ -15,14 +14,13 @@ export async function askAI(text) {
 
   chatHistory.push({ role: "user", content: text });
   
-  // Keep last 10 messages for context
   if (chatHistory.length > 10) chatHistory.shift();
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${config.openaiApiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

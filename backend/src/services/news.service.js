@@ -1,9 +1,8 @@
 import fetch from "node-fetch";
-import dotenv from "dotenv";
-dotenv.config();
+import { config } from "../config/env.js";
 
 export async function getNews(country = "pk") {
-  const url = `https://newsapi.org/v2/top-headlines?country=${country}&apiKey=${process.env.NEWS_API_KEY}`;
+  const url = `https://newsapi.org/v2/top-headlines?country=${country}&apiKey=${config.newsApiKey}`;
   try {
     const res = await fetch(url);
     const data = await res.json();

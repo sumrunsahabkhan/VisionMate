@@ -1,9 +1,8 @@
 import fetch from "node-fetch";
-import dotenv from "dotenv";
-dotenv.config();
+import { config } from "../config/env.js";
 
 export async function getWeather(city = "Islamabad") {
-  const apiKey = process.env.WEATHER_API_KEY;
+  const apiKey = config.weatherApiKey;
   const url = `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${apiKey}&units=metric`;
 
   try {
