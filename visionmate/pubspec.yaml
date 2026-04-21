@@ -1,0 +1,53 @@
+name: visionmate
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  battery_plus: ^7.0.0
+  flutter_tts: ^4.2.5
+  permission_handler: ^11.3.1
+  connectivity_plus: ^7.0.0
+  flutter_riverpod: ^2.4.9
+  intl: ^0.18.1
+  shared_preferences: ^2.2.2
+  http: ^1.1.0
+  just_audio: ^0.9.36
+  geolocator: ^10.1.0
+  geocoding: ^2.1.1
+  url_launcher: ^6.3.0
+  flutter_sms: ^3.0.0
+  flutter_phone_direct_caller: ^2.1.1
+  
+  # OCR & Camera Dependencies
+  google_mlkit_text_recognition: ^0.12.0
+  camera: ^0.10.5+9
+  path_provider: ^2.1.2
+  syncfusion_flutter_pdf: ^24.1.41
+  path: ^1.8.3
+  file_picker: ^8.1.7
+  pdfx: ^2.5.0
+
+  # Object Detection
+  tflite_flutter: ^0.12.0
+  image: ^4.1.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - android/app/src/main/assets/models/vosk-en/
+    - assets/
+    - assets/models/yolov8n_float32.tflite
