@@ -50,6 +50,7 @@ class HandleIntentUseCase {
     if (lowerText.contains("how can you help") || 
         lowerText.contains("what can you do") || 
         lowerText.contains("features") || 
+        lowerText.contains("know my features") ||
         lowerText.contains("kya kar sakte ho")) {
       intent = VoiceIntent.help;
     }
@@ -77,7 +78,7 @@ class HandleIntentUseCase {
 
       case VoiceIntent.help:
         return IntentResult(
-          speechText: "I can help you with many things. Offline, I can tell you the time, date, and battery. My Smart Camera can identify colors, printed text, and even read PDF files from your phone. I also have an SOS feature for emergencies. Online, I can answer questions, read news, or give weather updates. You can also ask for a tutorial by saying: User Guide.",
+          speechText: "I am Vision Mate, your personal assistant. Offline, I can provide time, date, and battery status. My Smart Camera can identify colors, detect objects, read printed text, and read PDF files. I also have an SOS feature for emergency calls. Online, I can answer any question, read news, or give weather reports. You can also customize my voice speed and pitch in settings by saying: Open Settings. For a full tutorial, say: User Guide.",
           action: IntentAction.none,
         );
 

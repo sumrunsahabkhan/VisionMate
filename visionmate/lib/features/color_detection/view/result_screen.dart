@@ -18,54 +18,70 @@ class ColorResultScreen extends ConsumerStatefulWidget {
 
 class _ColorResultScreenState extends ConsumerState<ColorResultScreen> with TickerProviderStateMixin {
   late AnimationController _pulseController;
+  late AnimationController _fadeController;
   Timer? _voiceReminderTimer;
   StreamSubscription? _voskSubscription;
   bool _speechFinished = false;
   bool _isNavigating = false;
-  DateTime? _micStartTime;
+  bool _isListening = false; 
+  int? _currentSpeechId;
+  DateTime? _lastTtsEndTime;
 
   @override
   void initState() {
     super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
-
-    Future.microtask(() => _handleInitialResultSpeech());
+    _pulseController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
+    _fadeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
+    
+    _fadeController.forward();
+    
+    Future.microtask(() {
+      _handleInitialResultSpeech();
+    });
   }
 
   Future<void> _handleInitialResultSpeech() async {
     if (!mounted) return;
-    final state = ref.read(colorViewModelProvider);
-    final result = state.result;
-    final tts = ref.read(ttsServiceProvider);
-    final vosk = ref.read(voskServiceProvider);
     
-    // 🔥 Stop mic and reset state immediately
+    // Stop mic and any ongoing speech
+    final vosk = ref.read(voskServiceProvider);
+    final tts = ref.read(ttsServiceProvider);
+    
     vosk.stop();
+    await tts.stop();
+
     setState(() {
       _speechFinished = false;
       _isNavigating = false;
+      _isListening = false; 
     });
 
+    final state = ref.read(colorViewModelProvider);
+    final result = state.result;
+    
     String colorName = result?.name ?? "Unknown";
     int confidence = result?.confidence ?? 0;
-    bool isLowMatch = confidence < 40;
     
-    // 🔥 CRITICAL: Instruction NO LONGER says the trigger words to prevent self-triggering
-    String message = isLowMatch 
-      ? "I detected $colorName, but the match is weak. I am listening for your command now."
-      : "The color is $colorName. I am listening for your command now.";
+    // Minimal delay prompt
+    String message = (confidence < 40)
+      ? "Detected $colorName. Match is weak. Say scan or close." 
+      : "The color is $colorName. Scan or close?";
     
+    final speechId = DateTime.now().millisecondsSinceEpoch;
+    _currentSpeechId = speechId;
+
     tts.onComplete(() {
-      if (mounted && !_isNavigating) {
-        // 🔥 Increased to 5 seconds. This ensures TTS is 100% done and room is quiet.
-        Future.delayed(const Duration(milliseconds: 5000), () {
-          if (mounted && !_isNavigating) {
-            setState(() => _speechFinished = true);
-            _startVoiceControl();
-            _resetVoiceReminder(isLowMatch);
+      if (mounted && !_isNavigating && _currentSpeechId == speechId) {
+        _lastTtsEndTime = DateTime.now();
+        // 🔥 Minimal delay for listening
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted && !_isNavigating && _currentSpeechId == speechId) {
+            setState(() {
+              _speechFinished = true;
+              _isListening = true; 
+            });
+            _startVoiceControl(); 
+            _resetVoiceReminder();
           }
         });
         tts.onComplete(() {}); 
@@ -75,30 +91,39 @@ class _ColorResultScreenState extends ConsumerState<ColorResultScreen> with Tick
     await tts.speak(message);
   }
 
-  void _resetVoiceReminder(bool isLowMatch) {
+  void _resetVoiceReminder() {
     _voiceReminderTimer?.cancel();
-    _voiceReminderTimer = Timer(const Duration(seconds: 20), () {
+    _voiceReminderTimer = Timer(const Duration(seconds: 15), () {
       if (mounted && _speechFinished && !_isNavigating) {
         final tts = ref.read(ttsServiceProvider);
-        final vosk = ref.read(voskServiceProvider);
+        
+        setState(() {
+          _isListening = false;
+          _speechFinished = false;
+        });
+        ref.read(voskServiceProvider).stop();
 
-        vosk.stop();
-        setState(() => _speechFinished = false);
+        final speechId = DateTime.now().millisecondsSinceEpoch;
+        _currentSpeechId = speechId;
 
         tts.onComplete(() {
-          if (mounted) {
-            Future.delayed(const Duration(milliseconds: 3000), () {
-              if (mounted && !_isNavigating) {
-                setState(() => _speechFinished = true);
+          if (mounted && _currentSpeechId == speechId) {
+            _lastTtsEndTime = DateTime.now();
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted && !_isNavigating && _currentSpeechId == speechId) {
+                setState(() {
+                  _speechFinished = true;
+                  _isListening = true;
+                });
                 _startVoiceControl();
-                _resetVoiceReminder(isLowMatch);
+                _resetVoiceReminder();
               }
             });
             tts.onComplete(() {});
           }
         });
 
-        tts.speak("Still listening. What would you like to do next?");
+        tts.speak("Scan again, or close?");
       }
     });
   }
@@ -109,74 +134,79 @@ class _ColorResultScreenState extends ConsumerState<ColorResultScreen> with Tick
     final vosk = ref.read(voskServiceProvider);
     
     vosk.stop();
-    vosk.start();
-    _micStartTime = DateTime.now();
-    
-    _voskSubscription = vosk.speechStream.listen((data) {
-      if (!mounted || !_speechFinished || _isNavigating) return;
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (!mounted || _isNavigating) return;
+      vosk.start();
       
-      // Strict 2.5s ignore window for any leftover noise
-      if (_micStartTime != null && DateTime.now().difference(_micStartTime!).inMilliseconds < 2500) {
-        return;
-      }
+      _voskSubscription = vosk.speechStream.listen((data) {
+        if (!mounted || !_isListening || !_speechFinished || _isNavigating) return;
 
-      final text = (data['text'] ?? "").toString().toLowerCase().trim();
-      final isFinal = data['isFinal'] ?? false;
-      
-      if (isFinal && text.isNotEmpty) {
-        debugPrint("Result Screen Voice recognized: $text");
+        // Minimized echo guard
+        if (_lastTtsEndTime != null && DateTime.now().difference(_lastTtsEndTime!).inMilliseconds < 300) {
+          return;
+        }
+
+        final text = (data['text'] ?? "").toString().toLowerCase().trim();
+        final isFinal = data['isFinal'] ?? false;
         
-        final state = ref.read(colorViewModelProvider);
-        final isLowMatch = (state.result?.confidence ?? 0) < 40;
-
-        // 🔥 STRICT Trigger Matching: Only act if the command is clear
-        if (isLowMatch) {
-          // Low accuracy commands
-          if (text.contains("try again") || text.contains("again") || text.contains("redo")) {
-            _handleRescan();
+        if (isFinal && text.isNotEmpty) {
+          debugPrint("Result Speech Heard: $text");
+          
+          if (text.split(' ').length > 3 || text.contains("the color is")) {
             return;
           }
-        } else {
-          // Good accuracy commands
-          if (text.contains("scan another") || text.contains("another") || text.contains("scan") || text.contains("next")) {
+
+          // Fuzzy matching preserved
+          final isScan = text == "scan" || text == "again" || text == "retry" || 
+                         text.contains("scan") || text.contains("again") || 
+                         text.contains("another") || text.contains("screen") || 
+                         text.contains("skein") || text.contains("skiing") || 
+                         text.contains("scheme");
+
+          final isClose = text == "close" || text == "exit" || text == "stop" || 
+                          text == "back" || text == "no";
+
+          if (isScan) {
             _handleRescan();
-            return;
+          } else if (isClose) {
+            _handleExit();
           }
         }
-
-        // Common exit commands
-        if (text.contains("close") || text.contains("exit") || text.contains("finish") || text.contains("stop") || text.contains("back")) {
-          _handleExit();
-        }
-      }
+      });
     });
   }
 
   void _handleRescan() {
     if (_isNavigating || !mounted) return;
-    _isNavigating = true;
+    setState(() {
+      _isListening = false;
+      _isNavigating = true;
+    });
     _cleanup();
     ref.read(colorViewModelProvider.notifier).reset();
-    
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const ColorCameraScreen(showIntro: false)),
-    );
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const ColorCameraScreen(showIntro: false)));
   }
 
   void _handleExit() {
     if (_isNavigating || !mounted) return;
-    _isNavigating = true;
+    setState(() {
+      _isListening = false;
+      _isNavigating = true;
+    });
     _cleanup();
-    ref.read(ttsServiceProvider).speak("Exiting color identification.");
+    
+    // 🔥 Restored original logic: Speech + Pop
+    ref.read(ttsServiceProvider).speak("Exiting color detection.");
     ref.read(assistantViewModelProvider.notifier).exitSubModule();
     
-    Navigator.of(context).popUntil((route) => route.isFirst);
+    // Simple pop to land back on Home
+    Navigator.of(context).pop();
   }
 
   void _cleanup() {
     _voiceReminderTimer?.cancel();
     _voskSubscription?.cancel();
+    _currentSpeechId = null;
     try {
       ref.read(voskServiceProvider).stop();
     } catch (_) {}
@@ -184,9 +214,9 @@ class _ColorResultScreenState extends ConsumerState<ColorResultScreen> with Tick
 
   @override
   void dispose() {
-    _isNavigating = true;
     _cleanup();
     _pulseController.dispose();
+    _fadeController.dispose();
     super.dispose();
   }
 
@@ -208,153 +238,137 @@ class _ColorResultScreenState extends ConsumerState<ColorResultScreen> with Tick
     final isLowMatch = (result?.confidence ?? 0) < 40;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF05050A),
+      backgroundColor: const Color(0xFF08080E),
       body: Stack(
         children: [
-          AnimatedContainer(
-            duration: const Duration(seconds: 1),
-            width: double.infinity,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                colors: [detectedColor.withOpacity(0.2), const Color(0xFF05050A)],
+          Positioned.fill(
+            child: AnimatedContainer(
+              duration: const Duration(seconds: 1),
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment.topCenter,
+                  radius: 1.2,
+                  colors: [detectedColor.withOpacity(0.15), Colors.transparent],
+                ),
               ),
             ),
           ),
 
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-              child: Column(
-                children: [
-                  _buildHeaderBadge(detectedColor),
-                  const Spacer(),
-                  _buildResultCard(result, detectedColor),
-                  const SizedBox(height: 40),
-                  if (isLowMatch) _buildAdviceBox(),
-                  const Spacer(),
-                  
-                  if (_speechFinished && !_isNavigating) _buildVoiceIndicator(isLowMatch),
-
-                  const SizedBox(height: 20),
-                  ElevatedButton(
-                    onPressed: _handleRescan,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white, foregroundColor: Colors.black,
-                      minimumSize: const Size(double.infinity, 65),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
-                    ),
-                    child: Text(
-                      isLowMatch ? "TRY AGAIN" : "SCAN ANOTHER", 
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 2)
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeaderBadge(Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.auto_awesome, color: color, size: 14),
-          const SizedBox(width: 10),
-          const Text("ANALYSIS COMPLETE", style: TextStyle(color: Colors.white54, letterSpacing: 3, fontWeight: FontWeight.bold, fontSize: 9)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildResultCard(ColorDetectionResult? result, Color color) {
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.bottomCenter,
-      children: [
-        Container(
-          height: 280,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(40),
-            border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5),
-            boxShadow: [BoxShadow(color: color.withOpacity(0.1), blurRadius: 40, spreadRadius: 5)],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(38.5),
-            child: result?.imagePath != null 
-              ? Image.file(File(result!.imagePath!), fit: BoxFit.cover)
-              : Container(color: Colors.white10),
-          ),
-        ),
-        
-        Positioned(
-          bottom: -20,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(30),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
-                width: MediaQuery.of(context).size.width * 0.75,
-                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: Colors.white.withOpacity(0.15)),
-                ),
+            child: FadeTransition(
+              opacity: _fadeController,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0),
                 child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      result?.name.toUpperCase() ?? "UNKNOWN",
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: -1, height: 1),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                      decoration: BoxDecoration(color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(20)),
-                      child: Text(
-                        "${result?.confidence ?? 0}% MATCH",
-                        style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 1),
-                      ),
-                    ),
+                    _buildTopStatus(detectedColor),
+                    const Spacer(),
+                    _buildMainCard(result, detectedColor),
+                    const SizedBox(height: 50),
+                    if (isLowMatch) _buildWarningBox(),
+                    const Spacer(),
+                    if (_isListening && !_isNavigating) _buildMicFeedback(),
+                    const SizedBox(height: 20),
+                    _buildBottomAction(isLowMatch),
+                    const SizedBox(height: 20),
                   ],
                 ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
-  Widget _buildAdviceBox() {
+  Widget _buildTopStatus(Color color) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.orangeAccent.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(25),
-        border: Border.all(color: Colors.orangeAccent.withOpacity(0.2)),
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.tips_and_updates_rounded, color: Colors.orangeAccent, size: 24),
+          Container(
+            width: 6, height: 6,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle, boxShadow: [BoxShadow(color: color, blurRadius: 4)]),
+          ),
+          const SizedBox(width: 10),
+          const Text("SCAN COMPLETE", style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 2)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMainCard(ColorDetectionResult? result, Color color) {
+    return Container(
+      height: 340,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [
+          BoxShadow(color: color.withOpacity(0.2), blurRadius: 40, spreadRadius: -10),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(32),
+        child: Stack(
+          children: [
+            result?.imagePath != null 
+              ? Image.file(File(result!.imagePath!), fit: BoxFit.cover, width: double.infinity, height: double.infinity)
+              : Container(color: Colors.white10),
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 30, left: 0, right: 0,
+              child: Column(
+                children: [
+                  Text(
+                    result?.name.toUpperCase() ?? "UNKNOWN",
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: 1),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withOpacity(0.3))),
+                    child: Text("${result?.confidence ?? 0}% MATCH", style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWarningBox() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: Colors.orangeAccent.withOpacity(0.05), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.orangeAccent.withOpacity(0.1))),
+      child: Row(
+        children: [
+          const Icon(Icons.info_outline_rounded, color: Colors.orangeAccent, size: 24),
           const SizedBox(width: 16),
           Expanded(
-            child: Column( crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text("IMPROVE ACCURACY", style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 11, letterSpacing: 1)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("LOW CONFIDENCE", style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 1)),
                 const SizedBox(height: 4),
-                Text("Try moving closer for a better match.", style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                Text("Try scanning again with better light.", style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13)),
               ],
             ),
           ),
@@ -363,29 +377,37 @@ class _ColorResultScreenState extends ConsumerState<ColorResultScreen> with Tick
     );
   }
 
-  Widget _buildVoiceIndicator(bool isLowMatch) {
-    return ScaleTransition(
-      scale: Tween(begin: 1.0, end: 1.05).animate(_pulseController),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.cyanAccent.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(40),
-          border: Border.all(color: Colors.cyanAccent.withOpacity(0.2)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.mic_rounded, color: Colors.cyanAccent, size: 18),
-            const SizedBox(width: 10),
-            Flexible(
-              child: Text(
-                isLowMatch ? "SAY 'TRY AGAIN' OR 'CLOSE'" : "SAY 'SCAN ANOTHER' OR 'CLOSE'", 
-                style: const TextStyle(color: Colors.cyanAccent, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1)
-              ),
-            ),
-          ],
-        ),
+  Widget _buildMicFeedback() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.cyanAccent.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(40),
+        border: Border.all(color: Colors.cyanAccent.withOpacity(0.2)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.mic_rounded, color: Colors.cyanAccent, size: 18),
+          const SizedBox(width: 12),
+          Text("SAY 'SCAN' OR 'CLOSE'", style: TextStyle(color: Colors.cyanAccent, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomAction(bool isLowMatch) {
+    return ElevatedButton(
+      onPressed: _handleRescan,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.white, foregroundColor: Colors.black,
+        minimumSize: const Size(double.infinity, 70),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        elevation: 0,
+      ),
+      child: Text(
+        isLowMatch ? "TRY AGAIN" : "SCAN ANOTHER",
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: 1),
       ),
     );
   }

@@ -12,20 +12,12 @@ class DetectedObject {
     required this.height,
   });
 
-  // Direction Logic based on the 0.35/0.65 ratio
-  String get direction {
-    double centerX = x + (width / 2);
-    if (centerX < 0.35) return "on your left";
-    if (centerX > 0.65) return "on your right";
-    return "directly ahead";
-  }
-
-  // Distance Logic based on Bounding Box Area
+  // Simplified proximity for natural human-like speech
   String get proximity {
     double area = width * height;
-    if (area > 0.40) return "right in front of you";
-    if (area > 0.15) return "a few steps away";
-    return "at a distance";
+    if (area > 0.40) return "very close";
+    if (area > 0.15) return "nearby";
+    return "a bit further away";
   }
 
   // Priority Manager (stair > door > person > furniture)
@@ -34,7 +26,7 @@ class DetectedObject {
     if (l == 'stair') return 0;
     if (l == 'door') return 1;
     if (l == 'person') return 2;
-    return 3; // bed, chair, cupboard, sofa, table
+    return 3;
   }
 
   double get area => width * height;

@@ -16,7 +16,7 @@ import '../../settings/data/settings_repository.dart';
 import '../../color_detection/view/intro_screen.dart';
 import '../../ocr/presentation/ocr_intro_view.dart';
 import '../../ocr/presentation/pdf_reader_view.dart';
-import '../../object_detection/presentation/object_intro_view.dart'; // Updated Import
+import '../../object_detection/presentation/object_intro_view.dart'; 
 
 enum AssistantUIState { home, time, battery, help, date, settings, manual, sleep, walkthrough, camera }
 
@@ -111,7 +111,9 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
   Timer? _silenceTimer, _walkthroughRetryTimer, _ttsTimeoutTimer, _sosRetryTimer;
   bool _isInternalStop = false;
 
-  bool _appReturnedFromCall = false;
+  Completer<void>? _callReturnCompleter;
+  bool _isAppPaused = false;
+  bool _sosWaitingForReturn = false;
   String _sosCurrentContactName = "";
   Completer<void>? _ttsCompleter;
 
@@ -122,9 +124,7 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
 
   Future<void> init() async {
     state = state.copyWith(isModelLoading: true);
-
     _setupTtsListeners();
-
     final location = _ref.read(locationServiceProvider);
     final battery = _ref.read(batteryServiceProvider);
 
@@ -171,6 +171,7 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
       _startWalkthrough(0);
     } else {
       state = state.copyWith(view: AssistantUIState.home, awake: false, isWalkthroughActive: false);
+      // 🔥 Restored original long greeting
       await speak("Hello, VisionMate here. Say Hello or tap the screen three times to wake me up, or say: User Guide, for a tutorial.");
     }
 
@@ -204,9 +205,14 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
     }
 
     state = state.copyWith(isSpeaking: false);
-
     if (state.isSubModuleActive) return;
-    if (state.isSOSActive && !state.isWaitingForSOSAnythingElse) return;
+    
+    if (state.isSOSActive && (state.isWaitingForConnectChoice || state.isWaitingForSafeChoice) && !state.isWaitingForSOSAnythingElse) {
+       state = state.copyWith(isWaitingForSOSAnythingElse: true);
+       _ref.read(voskServiceProvider).start();
+       _startSosRetryTimer();
+       return;
+    }
 
     if (!state.isOnlineWaiting) {
       if (state.awake && !state.isSOSActive && !state.isSettingUpEmergency) {
@@ -221,6 +227,7 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
           _runWalkthroughLogic();
         }
       } else {
+        // 🔥 Instant mic start
         _ref.read(voskServiceProvider).start();
         if (state.awake) _resetSilenceTimer();
         if (state.isSOSActive && state.isWaitingForSOSAnythingElse) _startSosRetryTimer();
@@ -242,18 +249,31 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
   }
 
   void resumeAssistant() {
-    _appReturnedFromCall = true;
-    _isInternalStop = true;
-    _ref.read(ttsServiceProvider).stop();
-    _isInternalStop = false;
-    state = state.copyWith(isSpeaking: false, isOnlineWaiting: false);
-    if (state.ready && !state.isSOSActive && !state.isSubModuleActive) {
-      _setupTtsListeners();
+    bool previouslyPaused = _isAppPaused;
+    _isAppPaused = false;
+    _setupTtsListeners();
+
+    if (state.isSOSActive && _sosWaitingForReturn && previouslyPaused) {
+       state = state.copyWith(isSpeaking: false, isWaitingForSOSAnythingElse: false);
+       if (_callReturnCompleter != null && !_callReturnCompleter!.isCompleted) {
+         _callReturnCompleter!.complete();
+       }
+    } else if (previouslyPaused) {
+       state = state.copyWith(isSpeaking: false, isOnlineWaiting: false);
+       if (_ttsCompleter != null && !_ttsCompleter!.isCompleted) {
+         _ttsCompleter!.complete();
+       }
+    }
+    
+    if (state.ready && !state.isSubModuleActive && !state.isSOSActive) {
       _ref.read(voskServiceProvider).start();
     }
   }
 
-  void pauseAssistant() => _ref.read(voskServiceProvider).stop();
+  void pauseAssistant() {
+    _isAppPaused = true;
+    _ref.read(voskServiceProvider).stop();
+  }
 
   void _onSpeech(Map<String, dynamic> data) {
     if (state.isSpeaking || state.isOnlineWaiting || !state.ready || state.isSubModuleActive) return;
@@ -261,11 +281,11 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
     final text = (data['text'] ?? "").toString().trim().toLowerCase();
     final isFinal = data['isFinal'] ?? false;
 
-    if (text.isNotEmpty && state.awake) {
+    if (text.isNotEmpty && (state.awake || state.isSOSActive)) {
       state = state.copyWith(currentText: text);
     }
 
-    if (!state.awake && text.isNotEmpty) {
+    if (!state.awake && !state.isSOSActive && text.isNotEmpty) {
       final intent = IntentParser.parse(text);
       if (intent == VoiceIntent.wake) {
         _wakeUp();
@@ -278,7 +298,6 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
     }
 
     if (text.isEmpty) return;
-
     final intent = IntentParser.parse(text);
 
     if (isFinal) {
@@ -289,18 +308,16 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
   void _handleFinalSpeech(VoiceIntent intent, String text) async {
     final lowerText = text.toLowerCase();
 
+    if (state.isSOSActive) {
+       _handleSosChoice(text);
+       return;
+    }
+
     if (intent == VoiceIntent.back) {
       if (state.view == AssistantUIState.camera) {
         _ref.read(cameraServiceProvider).stopCamera();
       }
-      state = state.copyWith(
-          view: AssistantUIState.home,
-          currentText: "",
-          isWalkthroughActive: false,
-          isSettingUpEmergency: false,
-          isSOSActive: false,
-          isSubModuleActive: false
-      );
+      state = state.copyWith(view: AssistantUIState.home, currentText: "", isWalkthroughActive: false, isSettingUpEmergency: false, isSOSActive: false, isSubModuleActive: false);
       await speak("Exiting. Returning to home.");
       return;
     }
@@ -341,7 +358,7 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
   }
 
   Future<void> handleIntent(VoiceIntent intent, String text) async {
-    final lowerText = text.toLowerCase();
+    final lowerText = text.toLowerCase().trim();
 
     if (intent == VoiceIntent.back) {
       if (state.view == AssistantUIState.camera) {
@@ -371,7 +388,8 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
       case IntentAction.time: state = state.copyWith(view: AssistantUIState.time); break;
       case IntentAction.date: state = state.copyWith(view: AssistantUIState.date); break;
       case IntentAction.battery:
-        final level = await _ref.read(batteryServiceProvider).batteryLevel;
+        final battery = _ref.read(batteryServiceProvider);
+        final level = await battery.batteryLevel;
         state = state.copyWith(view: AssistantUIState.battery, batteryLevel: level);
         break;
       case IntentAction.sleep: _goToSleep(); return;
@@ -469,7 +487,7 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
   }
 
   Future<void> _handleOnlineRequest(VoiceIntent intent, String text) async {
-    if (state.isSubModuleActive) return;
+    if (state.isSubModuleActive || state.isSOSActive) return;
 
     final conn = await _ref.read(connectivityServiceProvider).checkConnectivity();
     if (conn == ConnectionStatus.offline) {
@@ -479,18 +497,21 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
 
     _silenceTimer?.cancel();
     state = state.copyWith(isOnlineWaiting: true, currentText: "Checking online...");
-    await speak("One moment please.", wait: true);
+    
+    if (!state.isSOSActive) {
+      await speak("One moment please.", wait: true);
+    }
 
     try {
       final res = await _ref.read(assistantRepositoryProvider).getAssistantResponse(text, type: intent == VoiceIntent.news ? "news" : intent == VoiceIntent.weather ? "weather" : "ai", city: state.currentCity, country: state.currentCountry);
 
-      if (state.isSubModuleActive) return;
+      if (state.isSubModuleActive || state.isSOSActive) return;
 
       state = state.copyWith(isOnlineWaiting: false);
       if (res.text != null) { state = state.copyWith(currentText: res.text!); await speak(res.text!); }
     } catch (e) {
       state = state.copyWith(isOnlineWaiting: false);
-      if (!state.isSubModuleActive) speak("Sorry, I couldn't connect.");
+      if (!state.isSubModuleActive && !state.isSOSActive) speak("Sorry, I couldn't connect.");
     }
   }
 
@@ -499,7 +520,8 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
 
     _ref.read(voskServiceProvider).stop();
     _isInternalStop = true;
-    await _ref.read(ttsServiceProvider).stop();
+    
+    _ref.read(ttsServiceProvider).stop();
     _isInternalStop = false;
 
     state = state.copyWith(isSpeaking: true, currentText: text, lastSpokenText: text);
@@ -515,7 +537,7 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
     });
 
     final s = _ref.read(settingsRepositoryProvider);
-    await _ref.read(ttsServiceProvider).speak(text, rate: rate ?? s.speechRate, pitch: pitch ?? s.pitch);
+    _ref.read(ttsServiceProvider).speak(text, rate: rate ?? s.speechRate, pitch: pitch ?? s.pitch);
 
     if (wait) {
       await _ttsCompleter?.future;
@@ -651,41 +673,122 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
     }
 
     state = state.copyWith(isSOSActive: true, isWaitingForSOSAnythingElse: false, currentText: "PROCESSING SOS...");
-    await speak(_ref.read(emergencyUseCaseProvider).getInitialSpeech());
-    _executeCallSequence(settings.primaryContactName, settings.primaryContactNumber);
+    await speak(_ref.read(emergencyUseCaseProvider).getInitialSpeech(), wait: true);
+    
+    if (settings.primaryContactNumber.isNotEmpty) {
+      _executeCallSequence(settings.primaryContactName, settings.primaryContactNumber, isPrimary: true);
+    } else {
+      _executeCallSequence(settings.secondaryContactName, settings.secondaryContactNumber, isPrimary: false);
+    }
   }
 
-  Future<void> _executeCallSequence(String name, String number) async {
+  Future<void> _executeCallSequence(String name, String number, {required bool isPrimary}) async {
     final useCase = _ref.read(emergencyUseCaseProvider);
     _sosCurrentContactName = name;
-    state = state.copyWith(currentText: "CALLING $name...");
+    state = state.copyWith(currentText: "CALLING $name...", isWaitingForSOSAnythingElse: false);
 
-    await speak(useCase.getPrimaryCallingSpeech(name), wait: true);
+    final speech = isPrimary ? useCase.getPrimaryCallingSpeech(name) : useCase.getSecondaryCallingSpeech(name);
+    
+    // 🔥 Ensure speech finishes BEFORE dialer opens
+    await speak(speech, wait: true);
 
-    _appReturnedFromCall = false;
+    _sosWaitingForReturn = true;
+    _callReturnCompleter = Completer<void>();
+    
+    // 🔥 Start the call
     await useCase.makeCall(number);
 
-    for (int i = 0; i < 180; i++) {
-      if (!state.isSOSActive) return;
-      if (_appReturnedFromCall && i > 10) break;
-      await Future.delayed(const Duration(seconds: 1));
-    }
+    // Fallback timer if app never pauses or resumes
+    Future.delayed(const Duration(minutes: 1), () {
+      if (_callReturnCompleter != null && !_callReturnCompleter!.isCompleted) {
+        _callReturnCompleter!.complete();
+      }
+    });
 
-    await Future.delayed(const Duration(milliseconds: 2000));
+    // 🔥 This future will only complete when resumeAssistant() is called AFTER a pause
+    await _callReturnCompleter?.future;
+    _callReturnCompleter = null;
+    _sosWaitingForReturn = false;
+    
     _triggerSosChoice(name);
   }
 
   void _triggerSosChoice(String name) async {
     _sosCurrentContactName = name;
-    state = state.copyWith(isWaitingForSOSAnythingElse: true, isWaitingForConnectChoice: true, isWaitingForSafeChoice: false, currentText: "AWAITING CHOICE");
-    await speak(_ref.read(emergencyUseCaseProvider).getDidYouConnectSpeech(name));
+    final speech = _ref.read(emergencyUseCaseProvider).getDidYouConnectSpeech(name);
+    state = state.copyWith(
+      isWaitingForConnectChoice: true, 
+      isWaitingForSafeChoice: false, 
+      currentText: speech,
+      isWaitingForSOSAnythingElse: false,
+      isSpeaking: false
+    );
+    
+    // Give audio a tiny moment to stabilize after app resume
+    await Future.delayed(const Duration(milliseconds: 500));
+    await speak(speech); 
+    _startSosRetryTimer();
+  }
+
+  void _handleSosChoice(String text) async {
+    final lowerText = text.toLowerCase();
+    final settings = _ref.read(settingsRepositoryProvider);
+    final emergency = _ref.read(emergencyUseCaseProvider);
+    _sosRetryTimer?.cancel();
+
+    bool saidYes = lowerText.contains("yes") || lowerText.contains("haan") || lowerText.contains("ji") || lowerText.contains("connect") || lowerText.contains("success") || lowerText.contains("thik") || lowerText.contains("gaya") || lowerText.contains("hogaya") || lowerText.contains("done") || lowerText.contains("mil gaya");
+    bool saidNo = lowerText.contains("no") || lowerText.contains("nahi") || lowerText.contains("na") || lowerText.contains("fail") || lowerText.contains("not safe") || lowerText.contains("rehn") || lowerText.contains("ni");
+    bool saidSecondary = lowerText.contains("secondary") || lowerText.contains("doosra") || lowerText.contains("other") || lowerText.contains(settings.secondaryContactName.toLowerCase()) || lowerText.contains("dusre");
+    bool saidPrimary = lowerText.contains("primary") || lowerText.contains("pehla") || lowerText.contains(settings.primaryContactName.toLowerCase()) || lowerText.contains("pehle");
+
+    if (state.isWaitingForSafeChoice) {
+      if (saidYes || lowerText.contains("safe")) {
+         state = state.copyWith(isSOSActive: false, isWaitingForSOSAnythingElse: false, view: AssistantUIState.home, awake: false);
+         await speak(emergency.getSafeExitSpeech());
+         return;
+      } else if (saidNo) {
+         state = state.copyWith(isWaitingForSafeChoice: false, isWaitingForConnectChoice: true, isWaitingForSOSAnythingElse: false);
+         speak("Understood. Should I redial or call ${settings.secondaryContactName}?");
+         return;
+      }
+    }
+
+    if (saidYes) {
+       state = state.copyWith(isWaitingForConnectChoice: false, isWaitingForSafeChoice: true, isWaitingForSOSAnythingElse: false);
+       speak(emergency.getAreYouSafeSpeech());
+    } else if (saidNo) {
+       String nextSpeech = emergency.getNextActionSpeech(
+         isCurrentPrimary: _sosCurrentContactName == settings.primaryContactName, 
+         hasPrimary: settings.primaryContactNumber.isNotEmpty, 
+         hasSecondary: settings.secondaryContactNumber.isNotEmpty, 
+         pName: settings.primaryContactName, 
+         sName: settings.secondaryContactName
+       );
+       state = state.copyWith(isWaitingForConnectChoice: true, isWaitingForSafeChoice: false, isWaitingForSOSAnythingElse: false); 
+       speak(nextSpeech);
+    } else if (lowerText.contains("redial") || lowerText.contains("again") || lowerText.contains("phir se") || lowerText.contains("dobara")) {
+       _executeCallSequence(_sosCurrentContactName, _sosCurrentContactName == settings.primaryContactName ? settings.primaryContactNumber : settings.secondaryContactNumber, isPrimary: _sosCurrentContactName == settings.primaryContactName);
+    } else if (saidSecondary && settings.secondaryContactNumber.isNotEmpty) {
+       _executeCallSequence(settings.secondaryContactName, settings.secondaryContactNumber, isPrimary: false);
+    } else if (saidPrimary && settings.primaryContactNumber.isNotEmpty) {
+       _executeCallSequence(settings.primaryContactName, settings.primaryContactNumber, isPrimary: true);
+    } else if (lowerText.contains("safe") || lowerText.contains("stop") || lowerText.contains("exit") || lowerText.contains("bas") || lowerText.contains("khala") || lowerText.contains("band")) {
+       state = state.copyWith(isSOSActive: false, isWaitingForSOSAnythingElse: false, view: AssistantUIState.home, awake: false);
+       await speak(emergency.getSafeExitSpeech());
+    } else {
+       _startSosRetryTimer();
+    }
   }
 
   void _startSosRetryTimer() {
     _sosRetryTimer?.cancel();
     _sosRetryTimer = Timer(const Duration(seconds: 8), () {
-      if (state.isSOSActive && state.isWaitingForSOSAnythingElse && !state.isSpeaking) {
-        _triggerSosChoice(_sosCurrentContactName);
+      if (state.isSOSActive && !state.isSpeaking) {
+         if (state.isWaitingForConnectChoice) {
+           _triggerSosChoice(_sosCurrentContactName);
+         } else if (state.isWaitingForSafeChoice) {
+           speak(_ref.read(emergencyUseCaseProvider).getAreYouSafeSpeech());
+         }
       }
     });
   }
@@ -704,38 +807,12 @@ class AssistantViewModel extends StateNotifier<AssistantState> {
 
   void _handleEmergencySetupInput(String text) async {
     final intent = IntentParser.parse(text);
-    final result = _ref.read(emergencySetupUseCaseProvider).next(state.setupStep, text, intent, 
-      tempPName: state.tempPName, 
-      tempPNum: state.tempPNum, 
-      tempSName: state.tempSName, 
-      tempSNum: state.tempSNum
-    );
-
-    if (result.shouldSavePartial) {
-       await _ref.read(emergencySetupUseCaseProvider).saveContacts(
-         pName: result.pName ?? state.tempPName, 
-         pNum: result.pNum ?? state.tempPNum
-       );
-    }
-
+    final result = _ref.read(emergencySetupUseCaseProvider).next(state.setupStep, text, intent, tempPName: state.tempPName, tempPNum: state.tempPNum, tempSName: state.tempSName, tempSNum: state.tempSNum);
     if (result.isFinished) {
-      if (result.nextStep == -1 && state.setupStep == 4) {
-        await _ref.read(emergencySetupUseCaseProvider).saveContacts(
-          pName: state.tempPName, 
-          pNum: state.tempPNum, 
-          sName: state.tempSName, 
-          sNum: state.tempSNum
-        );
-      }
+      if (result.nextStep == -1 && state.setupStep == 4) { await _ref.read(emergencySetupUseCaseProvider).saveContacts(pName: state.tempPName, pNum: state.tempPNum, sName: state.tempSName, sNum: state.tempSNum); }
       state = state.copyWith(isSettingUpEmergency: false, view: AssistantUIState.home);
     } else {
-      state = state.copyWith(
-        setupStep: result.nextStep, 
-        tempPName: result.pName ?? state.tempPName, 
-        tempPNum: result.pNum ?? state.tempPNum, 
-        tempSName: result.sName ?? state.tempSName, 
-        tempSNum: result.sNum ?? state.tempSNum
-      );
+      state = state.copyWith(setupStep: result.nextStep, tempPName: result.pName ?? state.tempPName, tempPNum: result.pNum ?? state.tempPNum, tempSName: result.sName ?? state.tempSName, tempSNum: result.sNum ?? state.tempSNum);
     }
     await speak(result.speechText);
   }

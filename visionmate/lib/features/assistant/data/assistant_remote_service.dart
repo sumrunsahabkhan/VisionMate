@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class AssistantRemoteService {
-  // Updated to your current Wi-Fi IPv4 address from ipconfig (192.168.0.104)
-  final String _baseUrl = "http://192.168.0.104:3000/assistant"; 
+  // Using the live Render URL for production
+  static const String _baseUrl = "https://visionmate-api.onrender.com/assistant"; 
 
   Future<AssistantResponse> askAI(String text, {String type = "ai", String? city, String? country}) async {
     try {
@@ -16,7 +16,7 @@ class AssistantRemoteService {
           "city": city,
           "country": country,
         }),
-      ).timeout(const Duration(seconds: 30));
+      ).timeout(const Duration(seconds: 60)); // Increased timeout as Render free tier can take time to wake up
 
       if (response.statusCode == 200) {
         if (response.headers['content-type']?.contains('audio/mpeg') ?? false) {

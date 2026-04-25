@@ -28,8 +28,8 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
   void initState() {
     super.initState();
     _instructionsDone = !widget.showIntro;
-    _scannerController = AnimationController(vsync: this, duration: const Duration(seconds: 3))..repeat(reverse: true);
-    _pulseController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
+    _scannerController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
+    _pulseController = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat(reverse: true);
 
     Future.microtask(() => _initCameraFlow());
   }
@@ -56,8 +56,7 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
 
     tts.onComplete(() {
       if (mounted) {
-        // High delay to ensure room is quiet
-        Future.delayed(const Duration(milliseconds: 2500), () {
+        Future.delayed(const Duration(milliseconds: 100), () {
           if (mounted) {
             setState(() => _instructionsDone = true);
             viewModel.enableGuidance(true);
@@ -71,11 +70,11 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
     if (widget.showIntro) {
       String cameraName = isBackCamera ? "back" : "front";
       await tts.speak(
-        "Camera is ready. Double tap to take a picture. You are using the $cameraName lens. To change it, say: Switch Camera."
+        "Camera ready. Double tap to capture. Using $cameraName lens. Say Switch Camera to change."
       );
     } else {
       String cameraName = isBackCamera ? "back" : "front";
-      await tts.speak("Starting new scan with $cameraName camera.");
+      await tts.speak("Starting scan with $cameraName camera.");
     }
   }
 
@@ -91,8 +90,7 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
     _voskSubscription = vosk.speechStream.listen((data) {
       if (!mounted) return;
 
-      // Ignore noise within 2s of starting
-      if (_micStartTime != null && DateTime.now().difference(_micStartTime!).inMilliseconds < 2000) {
+      if (_micStartTime != null && DateTime.now().difference(_micStartTime!).inMilliseconds < 200) {
         return;
       }
 
@@ -100,8 +98,6 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
       final isFinal = data['isFinal'] ?? false;
       
       if (isFinal && text.isNotEmpty) {
-        debugPrint("Color Camera Mic: $text");
-        
         if (text.contains("which camera") || text.contains("check camera")) {
           _announceCameraState();
         }
@@ -116,7 +112,7 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
   }
 
   void _announceCameraState() {
-    String msg = "You are currently using the ${isBackCamera ? "back" : "front"} camera.";
+    String msg = "Using ${isBackCamera ? "back" : "front"} camera.";
     ref.read(ttsServiceProvider).speak(msg);
   }
 
@@ -132,11 +128,11 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
     setState(() => isBackCamera = !isBackCamera);
     await ref.read(cameraServiceProvider).switchCamera();
     
-    String msg = "Using ${isBackCamera ? "back" : "front"} camera now.";
+    String msg = "Switched to ${isBackCamera ? "back" : "front"} camera.";
     
     tts.onComplete(() {
       if (mounted) {
-        Future.delayed(const Duration(milliseconds: 2000), () {
+        Future.delayed(const Duration(milliseconds: 500), () {
           if (mounted) {
             viewModel.enableGuidance(true);
             _isSwitching = false;
@@ -155,6 +151,10 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
     _voskSubscription?.cancel();
     _scannerController.dispose();
     _pulseController.dispose();
+    // Stop mic when leaving
+    try {
+      ref.read(voskServiceProvider).stop();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -165,6 +165,8 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
     ref.listen(colorViewModelProvider, (previous, next) {
       if (next.status == ColorDetectionState.success && mounted) {
         _voskSubscription?.cancel();
+        // Stop mic before navigating to result screen
+        ref.read(voskServiceProvider).stop();
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const ColorResultScreen()));
       }
     });
@@ -179,6 +181,7 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
         },
         child: Stack(
           children: [
+            // Camera Preview
             const Positioned.fill(
               child: AndroidView(
                 key: ValueKey("visionmate_camera_view"),
@@ -186,130 +189,221 @@ class _ColorCameraScreenState extends ConsumerState<ColorCameraScreen> with Tick
               )
             ),
             
+            // Professional Overlay
             Positioned.fill(
               child: CustomPaint(
-                painter: SpotlightPainter(opacity: _instructionsDone ? 0.6 : 0.3),
+                painter: CameraOverlayPainter(
+                  borderColor: Colors.cyanAccent.withOpacity(0.5),
+                  isScanning: _instructionsDone
+                ),
               ),
             ),
 
-            Center(
-              child: Container(
-                width: 280, height: 280,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(40),
-                  border: Border.all(color: Colors.cyanAccent.withValues(alpha: _instructionsDone ? 0.4 : 0.1), width: 1),
-                ),
-                child: Stack(
-                  children: [
-                    _buildCorner(top: 0, left: 0), _buildCorner(top: 0, right: 0),
-                    _buildCorner(bottom: 0, left: 0), _buildCorner(bottom: 0, right: 0),
-                    if (_instructionsDone)
-                      AnimatedBuilder(
-                        animation: _scannerController,
-                        builder: (context, child) => Positioned(
-                          top: 280 * _scannerController.value, left: 30, right: 30,
-                          child: Container(height: 2, decoration: BoxDecoration(boxShadow: [BoxShadow(color: Colors.cyanAccent.withValues(alpha: 0.6), blurRadius: 15, spreadRadius: 2)], gradient: const LinearGradient(colors: [Colors.transparent, Colors.cyanAccent, Colors.transparent]))),
+            // Scanner Animation
+            if (_instructionsDone)
+              Center(
+                child: AnimatedBuilder(
+                  animation: _scannerController,
+                  builder: (context, child) {
+                    return Container(
+                      width: 280,
+                      height: 280,
+                      alignment: Alignment.topCenter,
+                      child: Transform.translate(
+                        offset: Offset(0, 280 * _scannerController.value),
+                        child: Container(
+                          height: 2,
+                          width: 240,
+                          decoration: BoxDecoration(
+                            boxShadow: [
+                              BoxShadow(color: Colors.cyanAccent.withOpacity(0.6), blurRadius: 10, spreadRadius: 2)
+                            ],
+                            gradient: const LinearGradient(colors: [Colors.transparent, Colors.cyanAccent, Colors.transparent])
+                          ),
                         ),
                       ),
-                  ],
+                    );
+                  },
                 ),
               ),
-            ),
 
             SafeArea(
               child: Column(
                 children: [
-                  const SizedBox(height: 20),
-                  _buildTopBar(),
-                  const SizedBox(height: 30),
-                  if (_instructionsDone) _buildGuidanceBox(state.guidance),
+                  _buildHeader(),
                   const Spacer(),
-                  _buildCaptureHint(),
-                  const SizedBox(height: 40),
+                  if (_instructionsDone) _buildGuidancePanel(state.guidance),
+                  const Spacer(),
+                  _buildBottomControls(),
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
 
             if (state.status == ColorDetectionState.processing)
-              Positioned.fill(child: Container(color: Colors.black.withValues(alpha: 0.8), child: const Center(child: CircularProgressIndicator(color: Colors.cyanAccent)))),
+              _buildLoadingOverlay(),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.all(20),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _buildGlassButton(icon: Icons.arrow_back_ios_new_rounded, onPressed: () => Navigator.pop(context)),
-          _buildGlassButton(icon: isBackCamera ? Icons.camera_rear_rounded : Icons.camera_front_rounded, onPressed: _switchCamera, color: Colors.cyanAccent),
+          _buildCircleButton(Icons.close_rounded, () => Navigator.pop(context)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.lens_blur_rounded, color: Colors.cyanAccent, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  isBackCamera ? "BACK LENS" : "FRONT LENS",
+                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1),
+                ),
+              ],
+            ),
+          ),
+          _buildCircleButton(Icons.flip_camera_ios_rounded, _switchCamera),
         ],
       ),
     );
   }
 
-  Widget _buildGlassButton({required IconData icon, required VoidCallback onPressed, Color color = Colors.white}) {
-    return ClipRRect(borderRadius: BorderRadius.circular(15),
-      child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(color: Colors.white.withValues(alpha: 0.05), child: IconButton(onPressed: onPressed, icon: Icon(icon, color: color, size: 20))),
+  Widget _buildCircleButton(IconData icon, VoidCallback onTap) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(30),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 50, height: 50,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.1),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white24)
+            ),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
+        ),
       ),
     );
   }
 
-  Widget _buildCorner({double? top, double? left, double? right, double? bottom}) {
-    return Positioned(top: top, left: left, right: right, bottom: bottom,
-      child: Container(width: 35, height: 35, decoration: BoxDecoration(border: Border(top: top != null ? const BorderSide(color: Colors.cyanAccent, width: 4) : BorderSide.none, bottom: bottom != null ? const BorderSide(color: Colors.cyanAccent, width: 4) : BorderSide.none, left: left != null ? const BorderSide(color: Colors.cyanAccent, width: 4) : BorderSide.none, right: right != null ? const BorderSide(color: Colors.cyanAccent, width: 4) : BorderSide.none))),
+  Widget _buildGuidancePanel(String guidance) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      margin: const EdgeInsets.symmetric(horizontal: 40),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.cyanAccent.withOpacity(0.3)),
+      ),
+      child: Text(
+        guidance.toUpperCase(),
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: Colors.cyanAccent, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2),
+      ),
     );
   }
 
-  Widget _buildGuidanceBox(String guidance) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.8), borderRadius: BorderRadius.circular(30), border: Border.all(color: Colors.white.withValues(alpha: 0.1))),
-      child: Text(guidance.toUpperCase(), style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.w900, letterSpacing: 2, fontSize: 10)),
-    );
-  }
-
-  Widget _buildCaptureHint() {
+  Widget _buildBottomControls() {
     return Column(
       children: [
-        ScaleTransition(scale: _pulseController, child: Icon(Icons.touch_app_rounded, color: Colors.white.withValues(alpha: 0.3), size: 30)),
-        const SizedBox(height: 10),
-        Text("DOUBLE TAP TO CAPTURE", style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 10, letterSpacing: 4, fontWeight: FontWeight.bold)),
+        ScaleTransition(
+          scale: _pulseController,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white.withOpacity(0.2), width: 2),
+            ),
+            child: const Icon(Icons.touch_app_rounded, color: Colors.white54, size: 30),
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          "DOUBLE TAP TO CAPTURE",
+          style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 3),
+        ),
       ],
+    );
+  }
+
+  Widget _buildLoadingOverlay() {
+    return Positioned.fill(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+        child: Container(
+          color: Colors.black87,
+          child: const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Colors.cyanAccent, strokeWidth: 2),
+                const SizedBox(height: 20),
+                Text("ANALYZING COLOR...", style: TextStyle(color: Colors.cyanAccent, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2)),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
 
-class SpotlightPainter extends CustomPainter {
-  final double opacity;
-  SpotlightPainter({required this.opacity});
+class CameraOverlayPainter extends CustomPainter {
+  final Color borderColor;
+  final bool isScanning;
+  CameraOverlayPainter({required this.borderColor, required this.isScanning});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.black.withValues(alpha: opacity);
-    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final paint = Paint()..color = Colors.black54;
+    final center = Offset(size.width / 2, size.height / 2);
+    const rectSize = 280.0;
+    final holeRect = Rect.fromCenter(center: center, width: rectSize, height: rectSize);
     
-    final holeRect = Rect.fromCenter(
-      center: Offset(size.width / 2, size.height / 2), 
-      width: 280, 
-      height: 280,
-    );
-    final holeRRect = RRect.fromRectAndRadius(holeRect, const Radius.circular(40));
-
+    // Outer overlay
     canvas.drawPath(
       Path.combine(
-        PathOperation.difference, 
-        Path()..addRect(rect), 
-        Path()..addRRect(holeRRect),
+        PathOperation.difference,
+        Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height)),
+        Path()..addRRect(RRect.fromRectAndRadius(holeRect, const Radius.circular(30))),
       ),
       paint,
     );
+
+    // Corner Borders
+    final borderPaint = Paint()
+      ..color = isScanning ? Colors.cyanAccent : Colors.white24
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke;
+
+    const cornerLength = 40.0;
+    final rrect = RRect.fromRectAndRadius(holeRect, const Radius.circular(30));
+    
+    // Top Left
+    canvas.drawPath(Path()..moveTo(rrect.left, rrect.top + cornerLength)..lineTo(rrect.left, rrect.top)..lineTo(rrect.left + cornerLength, rrect.top), borderPaint);
+    // Top Right
+    canvas.drawPath(Path()..moveTo(rrect.right - cornerLength, rrect.top)..lineTo(rrect.right, rrect.top)..lineTo(rrect.right, rrect.top + cornerLength), borderPaint);
+    // Bottom Left
+    canvas.drawPath(Path()..moveTo(rrect.left, rrect.bottom - cornerLength)..lineTo(rrect.left, rrect.bottom)..lineTo(rrect.left + cornerLength, rrect.bottom), borderPaint);
+    // Bottom Right
+    canvas.drawPath(Path()..moveTo(rrect.right - cornerLength, rrect.bottom)..lineTo(rrect.right, rrect.bottom)..lineTo(rrect.right, rrect.bottom - cornerLength), borderPaint);
   }
 
   @override
-  bool shouldRepaint(SpotlightPainter oldDelegate) => oldDelegate.opacity != opacity;
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

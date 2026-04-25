@@ -5,54 +5,65 @@ class SmartRoomDetector {
     final scores = {
       'kitchen': 0,
       'bedroom': 0,
-      'living room': 0,
+      'tv lounge': 0,
+      'drawing room': 0,
       'office': 0,
       'bathroom': 0,
+      'dining area': 0,
     };
 
-    // Kitchen - High priority items
-    if (_has(all, ['refrigerator', 'fridge', 'stove', 'sink', 'kettle', 'microwave', 'oven'])) {
-      scores['kitchen'] = scores['kitchen']! + 15;
+    // Kitchen - High confidence objects
+    if (_has(all, ['refrigerator', 'fridge', 'microwave', 'oven', 'sink', 'toaster'])) {
+      scores['kitchen'] = scores['kitchen']! + 20; // Increased weight
     }
-    if (_has(all, ['cupboard', 'cabinet', 'countertop', 'dish', 'gas stove', 'tap'])) {
-      scores['kitchen'] = scores['kitchen']! + 5;
+    // Kitchen - Utensils and small items (Very common in Pakistani kitchens on counters)
+    if (_has(all, ['bottle', 'cup', 'fork', 'knife', 'spoon', 'bowl'])) {
+      scores['kitchen'] = scores['kitchen']! + 10;
     }
 
     // Bedroom
     if (_has(all, ['bed', 'pillow', 'blanket', 'mattress'])) {
-      scores['bedroom'] = scores['bedroom']! + 15;
-    }
-    if (_has(all, ['wardrobe', 'dresser'])) {
-      scores['bedroom'] = scores['bedroom']! + 5;
+      scores['bedroom'] = scores['bedroom']! + 20;
     }
 
-    // Office - Be careful with "desk" as it can be a kitchen counter
-    if (_has(all, ['laptop', 'computer', 'monitor', 'keyboard'])) {
-       scores['office'] = scores['office']! + 15;
-    } else if (_has(all, ['desk'])) {
-       // Only count desk if no kitchen items are present
-       if (scores['kitchen']! == 0) {
-         scores['office'] = scores['office']! + 5;
-       }
+    // Office
+    if (_has(all, ['laptop', 'computer', 'monitor', 'keyboard', 'mouse'])) {
+       scores['office'] = scores['office']! + 20;
     }
 
-    // Living Room
-    if (_has(all, ['sofa', 'couch', 'television', 'tv', 'coffee table'])) {
-      scores['living room'] = scores['living room']! + 10;
+    // TV Lounge
+    if (_has(all, ['television', 'tv'])) {
+      scores['tv lounge'] = scores['tv lounge']! + 20;
+    }
+    if (_has(all, ['couch', 'sofa', 'remote'])) {
+      scores['tv lounge'] = scores['tv lounge']! + 10;
+    }
+
+    // Drawing Room
+    if (_has(all, ['couch', 'sofa', 'vase']) && !_has(all, ['tv', 'television'])) {
+      scores['drawing room'] = scores['drawing room']! + 15;
+    }
+
+    // Dining Area
+    if (_has(all, ['dining table'])) {
+      scores['dining area'] = scores['dining area']! + 20;
     }
 
     // Bathroom
-    if (_has(all, ['toilet', 'shower', 'bathtub', 'faucet', 'washbasin'])) {
-      scores['bathroom'] = scores['bathroom']! + 15;
+    if (_has(all, ['toilet', 'shower', 'faucet', 'washbasin', 'toothbrush'])) {
+      scores['bathroom'] = scores['bathroom']! + 20;
     }
 
-    // Tie-breaking logic: Kitchen usually overrides Office if cupboards/fridge are present
-    if (scores['kitchen']! > 0 && scores['office']! > 0) {
-      scores['office'] = 0; 
+    // Tie-breaking Logic
+    // If kitchen items are detected, it's very likely a kitchen even if a chair is present
+    if (scores['kitchen']! >= 10) {
+      scores['tv lounge'] = 0;
+      scores['drawing room'] = 0;
+      scores['bedroom'] = 0;
     }
 
     final detected = scores.entries
-        .where((e) => e.value >= 10) // Higher threshold for confidence
+        .where((e) => e.value >= 10)
         .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 

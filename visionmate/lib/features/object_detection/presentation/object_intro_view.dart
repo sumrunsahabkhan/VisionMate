@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/services/service_providers.dart';
@@ -12,8 +13,9 @@ class ObjectIntroView extends ConsumerStatefulWidget {
   ConsumerState<ObjectIntroView> createState() => _ObjectIntroViewState();
 }
 
-class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTickerProviderStateMixin {
+class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with TickerProviderStateMixin {
   late AnimationController _pulseController;
+  late AnimationController _rotationController;
   Timer? _reminderTimer;
   StreamSubscription? _voskSubscription;
   bool _canListen = false;
@@ -40,6 +42,11 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
 
+    _rotationController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 15),
+    )..repeat();
+
     Future.microtask(() => _startIntroSequence());
   }
 
@@ -48,14 +55,13 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
     _isSpeaking = true;
     _canListen = false;
     
-    // Stop mic while app is talking
     ref.read(voskServiceProvider).stop();
     _voskSubscription?.cancel();
     
     tts.onComplete(() {
       if (mounted) {
-        // 🔥 Wait for echoes to die down
-        Future.delayed(const Duration(milliseconds: 1000), () {
+        // 🔥 Reduced delay to be more responsive
+        Future.delayed(const Duration(milliseconds: 200), () {
           if (mounted) {
             setState(() => _canListen = true);
             _isSpeaking = false;
@@ -68,7 +74,7 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
     });
 
     await tts.speak(
-      "Smart Vision activated. Say Scan to hear everything around you, or say Find to search for a specific object. You can also say Exit to go back."
+      "Smart Vision activated. Say Scan to hear everything around you, Find to search for an object, or Room to identify your location. You can also say Exit to go back."
     );
   }
 
@@ -76,8 +82,27 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
     _reminderTimer?.cancel();
     _reminderTimer = Timer(const Duration(seconds: 15), () {
       if (mounted && _canListen && !_isSpeaking) {
-        ref.read(ttsServiceProvider).speak("Awaiting command. Say Scan, Find, or Exit.");
-        _resetReminderTimer();
+        final tts = ref.read(ttsServiceProvider);
+        final vosk = ref.read(voskServiceProvider);
+        
+        // 🔥 STOP listening before reminder to avoid false positives
+        vosk.stop();
+        _isSpeaking = true;
+
+        tts.onComplete(() {
+          if (mounted) {
+            Future.delayed(const Duration(milliseconds: 200), () {
+              if (mounted) {
+                _isSpeaking = false;
+                vosk.start(); // Restart listening
+                _resetReminderTimer();
+                tts.onComplete(() {});
+              }
+            });
+          }
+        });
+        
+        tts.speak("Awaiting command. Say Scan, Find, Room, or Exit.");
       }
     });
   }
@@ -94,13 +119,14 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
       final text = (data['text'] ?? "").toString().toLowerCase().trim();
       if (text.isEmpty || text.length < 3) return;
 
-      // Ignore if it's just the app's own words echoing back
       if (text.contains("smart vision") || text.contains("activated")) return;
 
       if (text.contains("scan") || text.contains("around") || text.contains("everything")) {
         _navigateToDetection(mode: "scan");
       } else if (text.contains("find") || text.contains("search")) {
         _askWhichObject();
+      } else if (text.contains("room") || text.contains("location") || text.contains("jagah") || text.contains("kahan")) {
+        _navigateToDetection(mode: "room");
       } else if (text.contains("exit") || text.contains("back")) {
         _handleExit();
       }
@@ -116,14 +142,13 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
     final tts = ref.read(ttsServiceProvider);
     final vosk = ref.read(voskServiceProvider);
     
-    // Force mic OFF
     vosk.stop();
     _voskSubscription?.cancel();
     
     tts.onComplete(() {
       if (mounted) {
-        // 🔥 Critical delay to ensure zero self-hearing
-        Future.delayed(const Duration(milliseconds: 1200), () {
+        // 🔥 Faster response
+        Future.delayed(const Duration(milliseconds: 200), () {
           if (mounted) {
             setState(() => _canListen = true);
             _isSpeaking = false;
@@ -146,19 +171,12 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
       if (!mounted || !_canListen || _isSpeaking) return;
 
       final text = (data['text'] ?? "").toString().toLowerCase().trim();
-      
-      // Strict noise gate
       if (text.isEmpty || text.length < 3) return;
-      
-      // 🚫 HEURISTIC: Ignore if the recognized text is exactly what the app just said
       if (text == "which object are you looking for" || text.contains("common object")) return;
-
-      debugPrint("Confirmed user search request: $text");
 
       String? matchedLabel;
       final words = text.split(" ");
       
-      // 1. Precise Match
       for (var label in _yoloLabels) {
         if (words.contains(label)) {
           matchedLabel = label;
@@ -166,7 +184,6 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
         }
       }
 
-      // 2. Fuzzy Mapping
       if (matchedLabel == null) {
         if (text.contains("phone")) matchedLabel = "cell phone";
         else if (text.contains("table")) matchedLabel = "dining table";
@@ -177,7 +194,6 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
       if (matchedLabel != null) {
         _confirmAndStart(matchedLabel);
       }
-      // No 'else' auto-jump. It will stay listening until a valid label is heard.
     });
   }
 
@@ -227,51 +243,278 @@ class _ObjectIntroViewState extends ConsumerState<ObjectIntroView> with SingleTi
   void dispose() {
     _cleanup();
     _pulseController.dispose();
+    _rotationController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    const accentColor = Colors.blueAccent;
+
     return Scaffold(
       backgroundColor: const Color(0xFF05050A),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: RadialGradient(center: const Alignment(0, -0.5), radius: 1.2, colors: [Colors.blueAccent.withOpacity(0.15), Colors.transparent]),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(32.0),
+      body: Stack(
+        children: [
+          // Background Glow
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _pulseController,
+              builder: (context, child) => Container(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment.center,
+                    radius: 1.5 + (_pulseController.value * 0.2),
+                    colors: [accentColor.withOpacity(0.08), Colors.transparent],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          
+          SafeArea(
             child: Column(
               children: [
-                const Spacer(),
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    ScaleTransition(
-                      scale: Tween(begin: 1.0, end: 1.1).animate(_pulseController),
-                      child: Container(width: 220, height: 220, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.blueAccent.withOpacity(0.2), width: 1.5))),
+                _buildHeader(accentColor),
+                Expanded(
+                  child: Center(
+                    child: SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 30),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(height: 10),
+                          _buildCentralVisual(accentColor),
+                          const SizedBox(height: 30),
+                          _buildStatusInfo(accentColor),
+                          const SizedBox(height: 10),
+                        ],
+                      ),
                     ),
-                    Container(padding: const EdgeInsets.all(45), decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.blueAccent.withOpacity(0.6), width: 3)), child: const Icon(Icons.remove_red_eye_rounded, size: 80, color: Colors.blueAccent)),
-                  ],
+                  ),
                 ),
-                const SizedBox(height: 60),
-                const Text("SMART VISION", style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900, letterSpacing: 4)),
-                const SizedBox(height: 20),
-                const Text("I can help you explore your surroundings or find specific objects.", textAlign: TextAlign.center, style: TextStyle(color: Colors.white70, fontSize: 16, height: 1.6)),
-                const Spacer(),
-                Row(
-                  children: [
-                    Expanded(child: ElevatedButton(onPressed: () => _navigateToDetection(mode: "scan"), style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, minimumSize: const Size(0, 75), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40))), child: const Text("SCAN", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.5)))),
-                    const SizedBox(width: 15),
-                    Expanded(child: ElevatedButton(onPressed: _askWhichObject, style: ElevatedButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.1), foregroundColor: Colors.white, minimumSize: const Size(0, 75), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40))), child: const Text("FIND", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.5)))),
-                  ],
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildActionButtons(accentColor),
+                      const SizedBox(height: 5),
+                      _buildBackButton(),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 30),
-                TextButton(onPressed: _handleExit, child: const Text("GO BACK", style: TextStyle(color: Colors.white38, letterSpacing: 4, fontSize: 13, fontWeight: FontWeight.bold))),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader(Color color) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(30, 20, 30, 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "VISION ENGINE",
+                style: TextStyle(color: Colors.white24, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 5),
+              ),
+              const SizedBox(height: 4),
+              Container(
+                width: 30, height: 2,
+                decoration: BoxDecoration(
+                  color: color,
+                  boxShadow: [BoxShadow(color: color.withOpacity(0.5), blurRadius: 4)],
+                ),
+              ),
+            ],
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: color.withOpacity(0.2)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.online_prediction_rounded, size: 12, color: Colors.blueAccent),
+                const SizedBox(width: 5),
+                Text("READY", style: TextStyle(color: color, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 2)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCentralVisual(Color color) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        RotationTransition(
+          turns: _rotationController,
+          child: Container(
+            width: 170, height: 170,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: color.withOpacity(0.1), width: 1),
+            ),
+            child: Stack(
+              children: [
+                Positioned(
+                  top: 0, left: 85,
+                  child: Container(
+                    width: 5, height: 5,
+                    decoration: BoxDecoration(shape: BoxShape.circle, color: color, boxShadow: [BoxShadow(color: color, blurRadius: 6)]),
+                  ),
+                ),
               ],
             ),
           ),
         ),
+        ScaleTransition(
+          scale: Tween(begin: 1.0, end: 1.05).animate(_pulseController),
+          child: Container(
+            padding: const EdgeInsets.all(35),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF05050A),
+              border: Border.all(color: color.withOpacity(0.5), width: 2),
+              boxShadow: [BoxShadow(color: color.withOpacity(0.2), blurRadius: 30)],
+            ),
+            child: Icon(Icons.remove_red_eye_rounded, size: 60, color: color),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatusInfo(Color color) {
+    return Column(
+      children: [
+        const Text(
+          "SMART VISION",
+          style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 2),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          "I can help you explore your surroundings or identify your room.",
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white38, fontSize: 13, height: 1.6, letterSpacing: 0.5),
+        ),
+        if (_canListen) ...[
+          const SizedBox(height: 25),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: color.withOpacity(0.1)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.mic_rounded, size: 14, color: color),
+                const SizedBox(width: 10),
+                const Text(
+                  "SAY 'SCAN' OR 'ROOM'",
+                  style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 2),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildActionButtons(Color color) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _customButton(
+                "SCAN", 
+                Icons.explore_rounded, 
+                color, 
+                true, 
+                () => _navigateToDetection(mode: "scan")
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _customButton(
+                "FIND", 
+                Icons.search_rounded, 
+                Colors.white.withOpacity(0.05), 
+                false, 
+                _askWhichObject
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _customButton(
+          "IDENTIFY ROOM", 
+          Icons.home_work_rounded, 
+          Colors.white.withOpacity(0.05), 
+          false, 
+          () => _navigateToDetection(mode: "room"),
+          isFullWidth: true
+        ),
+      ],
+    );
+  }
+
+  Widget _customButton(String label, IconData icon, Color color, bool filled, VoidCallback onTap, {bool isFullWidth = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 60,
+        width: isFullWidth ? double.infinity : null,
+        decoration: BoxDecoration(
+          color: filled ? color : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: filled ? Colors.transparent : Colors.white10),
+          boxShadow: filled ? [BoxShadow(color: color.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 5))] : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.white, size: 18),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 2
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBackButton() {
+    return TextButton(
+      onPressed: _handleExit,
+      style: TextButton.styleFrom(foregroundColor: Colors.white24),
+      child: const Text(
+        "GO BACK",
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 4),
       ),
     );
   }

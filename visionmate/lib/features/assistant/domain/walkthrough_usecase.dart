@@ -71,7 +71,7 @@ class WalkthroughUseCase {
         );
       case 13:
         return WalkthroughStepConfig(
-          text: "My Smart Camera is very powerful. I can identify colors of your clothes or objects around you. I can also read printed text from documents and even browse and read PDF files stored on your phone. Just say: Scan Text, or Read PDF, to start.",
+          text: "My Smart Camera is very powerful. I can identify colors, detect objects around you, read printed text from documents, and even read PDF files. Just say: Color, Object Detection, Scan Text, or Read PDF, to start.",
           nextStep: 14,
           isAwake: true,
         );

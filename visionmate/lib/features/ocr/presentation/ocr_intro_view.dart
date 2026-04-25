@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/services/service_providers.dart';
@@ -13,8 +14,9 @@ class OCRIntroView extends ConsumerStatefulWidget {
   ConsumerState<OCRIntroView> createState() => _OCRIntroViewState();
 }
 
-class _OCRIntroViewState extends ConsumerState<OCRIntroView> with SingleTickerProviderStateMixin {
+class _OCRIntroViewState extends ConsumerState<OCRIntroView> with TickerProviderStateMixin {
   late AnimationController _pulseController;
+  late AnimationController _rotationController;
   Timer? _reminderTimer;
   StreamSubscription? _voskSubscription;
   bool _canListen = false;
@@ -26,6 +28,11 @@ class _OCRIntroViewState extends ConsumerState<OCRIntroView> with SingleTickerPr
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
+
+    _rotationController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 10),
+    )..repeat();
 
     Future.microtask(() => _startIntroSequence());
   }
@@ -68,7 +75,8 @@ class _OCRIntroViewState extends ConsumerState<OCRIntroView> with SingleTickerPr
       
       if (text.isNotEmpty) {
         debugPrint("OCR Intro Voice: $text");
-        if (text.contains("scan") || text.contains("camera") || text.contains("shuru") || text.contains("photo")) {
+        // Added 'skin' as an alias for 'scan' to improve voice detection reliability
+        if (text.contains("scan") || text.contains("skin") || text.contains("camera") || text.contains("shuru") || text.contains("photo")) {
           _navigateToScanner();
         } else if (text.contains("pdf") || text.contains("document") || text.contains("file") || text.contains("parho")) {
           _navigateToPdfReader();
@@ -105,8 +113,6 @@ class _OCRIntroViewState extends ConsumerState<OCRIntroView> with SingleTickerPr
   void _cleanup() {
     _reminderTimer?.cancel();
     _voskSubscription?.cancel();
-    // Use the provider context to stop Vosk, not 'ref' directly if we are in dispose
-    // or just avoid calling ref in the actual dispose logic if it's already defunct.
     try {
        ref.read(voskServiceProvider).stop();
     } catch (_) {}
@@ -116,94 +122,229 @@ class _OCRIntroViewState extends ConsumerState<OCRIntroView> with SingleTickerPr
   void dispose() {
     _reminderTimer?.cancel();
     _voskSubscription?.cancel();
-    // Don't call _cleanup() here because it uses 'ref' which might be defunct
     _pulseController.dispose();
+    _rotationController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    const accentColor = Colors.orangeAccent;
+    
     return Scaffold(
       backgroundColor: const Color(0xFF05050A),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment.topCenter,
-            radius: 1.5,
-            colors: [Colors.orangeAccent.withOpacity(0.1), Colors.transparent],
+      body: Stack(
+        children: [
+          // Background Glow
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _pulseController,
+              builder: (context, child) => Container(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment.center,
+                    radius: 1.5 + (_pulseController.value * 0.2),
+                    colors: [accentColor.withOpacity(0.08), Colors.transparent],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 30),
+              child: Column(
+                children: [
+                  const SizedBox(height: 40),
+                  _buildHeader(accentColor),
+                  const Spacer(),
+                  _buildCentralVisual(accentColor),
+                  const Spacer(),
+                  _buildStatusInfo(accentColor),
+                  const SizedBox(height: 40),
+                  _buildActionButtons(accentColor),
+                  const SizedBox(height: 20),
+                  _buildBackButton(),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader(Color color) {
+    return Column(
+      children: [
+        const Text(
+          "VISION ENGINE",
+          style: TextStyle(color: Colors.white24, fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 6),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: 40,
+          height: 2,
+          decoration: BoxDecoration(
+            color: color,
+            boxShadow: [BoxShadow(color: color.withOpacity(0.5), blurRadius: 8)],
           ),
         ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(32.0),
-            child: Column(
+      ],
+    );
+  }
+
+  Widget _buildCentralVisual(Color color) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        // Rotating Ring
+        RotationTransition(
+          turns: _rotationController,
+          child: Container(
+            width: 220,
+            height: 220,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: color.withOpacity(0.1), width: 1),
+            ),
+            child: Stack(
               children: [
-                const Spacer(),
-                ScaleTransition(
-                  scale: Tween(begin: 1.0, end: 1.1).animate(_pulseController),
+                Positioned(
+                  top: 0,
+                  left: 110,
                   child: Container(
-                    padding: const EdgeInsets.all(40),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.orangeAccent.withOpacity(0.3), width: 2),
-                    ),
-                    child: const Icon(Icons.document_scanner_rounded, size: 100, color: Colors.orangeAccent),
+                    width: 6, height: 6,
+                    decoration: BoxDecoration(shape: BoxShape.circle, color: color, boxShadow: [BoxShadow(color: color, blurRadius: 4)]),
                   ),
-                ),
-                const SizedBox(height: 50),
-                const Text("SMART OCR", style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 4)),
-                const SizedBox(height: 20),
-                const Text(
-                  "I can read text from your camera or PDF documents.",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: 16, height: 1.6),
-                ),
-                const Spacer(),
-                if (_canListen)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(20)),
-                    child: const Text("SAY 'SCAN' OR 'PDF'", style: TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 2)),
-                  ),
-                const SizedBox(height: 40),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: _navigateToScanner,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orangeAccent,
-                          foregroundColor: Colors.black,
-                          minimumSize: const Size(0, 70),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(35)),
-                        ),
-                        child: const Text("SCAN", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-                      ),
-                    ),
-                    const SizedBox(width: 15),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: _navigateToPdfReader,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white10,
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(0, 70),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(35)),
-                        ),
-                        child: const Text("PDF", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                TextButton(
-                  onPressed: _handleExit,
-                  child: const Text("GO BACK", style: TextStyle(color: Colors.white38, letterSpacing: 4, fontSize: 12, fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
           ),
         ),
+        // Pulsing Core
+        ScaleTransition(
+          scale: Tween(begin: 1.0, end: 1.05).animate(_pulseController),
+          child: Container(
+            padding: const EdgeInsets.all(45),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withOpacity(0.03),
+              border: Border.all(color: color.withOpacity(0.3), width: 2),
+              boxShadow: [BoxShadow(color: color.withOpacity(0.1), blurRadius: 30)],
+            ),
+            child: Icon(Icons.document_scanner_rounded, size: 80, color: color),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatusInfo(Color color) {
+    return Column(
+      children: [
+        const Text(
+          "TEXT RECOGNITION",
+          style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 2),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          "Neural processing active. I can read physical text or digital documents for you.",
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white38, fontSize: 14, height: 1.5, letterSpacing: 0.5),
+        ),
+        if (_canListen) ...[
+          const SizedBox(height: 30),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: color.withOpacity(0.2)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.mic_rounded, size: 14, color: color),
+                const SizedBox(width: 8),
+                Text(
+                  "SAY 'SCAN' OR 'PDF'",
+                  style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 2),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildActionButtons(Color color) {
+    return Row(
+      children: [
+        Expanded(
+          child: _customButton(
+            "SCAN", 
+            Icons.camera_alt_rounded, 
+            color, 
+            true, 
+            _navigateToScanner
+          ),
+        ),
+        const SizedBox(width: 20),
+        Expanded(
+          child: _customButton(
+            "PDF", 
+            Icons.picture_as_pdf_rounded, 
+            Colors.white10, 
+            false, 
+            _navigateToPdfReader
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _customButton(String label, IconData icon, Color color, bool filled, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 70,
+        decoration: BoxDecoration(
+          color: filled ? color : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          border: filled ? null : Border.all(color: Colors.white10),
+          boxShadow: filled ? [BoxShadow(color: color.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 5))] : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: filled ? Colors.black : Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: TextStyle(
+                color: filled ? Colors.black : Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 2
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBackButton() {
+    return TextButton(
+      onPressed: _handleExit,
+      style: TextButton.styleFrom(foregroundColor: Colors.white24),
+      child: const Text(
+        "GO BACK",
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 4),
       ),
     );
   }

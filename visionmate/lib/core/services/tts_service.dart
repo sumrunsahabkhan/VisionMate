@@ -3,6 +3,10 @@ import 'dart:io' show Platform;
 
 class TtsService {
   final FlutterTts _tts = FlutterTts();
+  
+  double? _lastRate;
+  double? _lastPitch;
+  String? _lastLang;
 
   TtsService() {
     _initTts();
@@ -16,9 +20,11 @@ class TtsService {
   }
 
   Future<void> speak(String text, {String language = 'en-US', double rate = 0.5, double pitch = 1.0}) async {
-    await _tts.setLanguage(language);
-    await _tts.setPitch(pitch);
-    await _tts.setSpeechRate(rate);
+    // Restore awaits for stability, but keep optimizations
+    if (_lastLang != language) { await _tts.setLanguage(language); _lastLang = language; }
+    if (_lastPitch != pitch) { await _tts.setPitch(pitch); _lastPitch = pitch; }
+    if (_lastRate != rate) { await _tts.setSpeechRate(rate); _lastRate = rate; }
+    
     await _tts.speak(text);
   }
 
@@ -26,7 +32,6 @@ class TtsService {
   void onCancel(Function callback) => _tts.setCancelHandler(() => callback());
   void onError(Function(String) callback) => _tts.setErrorHandler((msg) => callback(msg));
   
-  // 🔥 Word Tracking Handler
   void setProgressHandler(Function(String text, int start, int end, String word) callback) {
     _tts.setProgressHandler((text, start, end, word) => callback(text, start, end, word));
   }

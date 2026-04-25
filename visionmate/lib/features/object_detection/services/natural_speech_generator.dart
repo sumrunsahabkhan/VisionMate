@@ -12,9 +12,8 @@ class NaturalSpeechGenerator {
 
     final parts = <String>[];
 
-    // 1. Spatial Grouping and Relationships
-    final processedIndices = <int>{};
     // Sort by area (larger/closer objects first) to establish context
+    final processedIndices = <int>{};
     final sorted = List<DetectedObject>.from(objects)..sort((a, b) => b.area.compareTo(a.area));
 
     for (int i = 0; i < sorted.length; i++) {
@@ -37,10 +36,11 @@ class NaturalSpeechGenerator {
       // Action Detection for Persons
       if (label == 'person') {
         final status = _getPersonStatus(obj, sorted);
-        parts.add("I see a person $status ${obj.direction}, ${obj.proximity}.");
+        // Removed 'direction' for a more humanistic feel as requested
+        parts.add("I see a person $status, ${obj.proximity}.");
       } 
       else if (relationship != null) {
-        parts.add("There is a $relationship ${obj.direction}.");
+        parts.add("There is a $relationship, ${obj.proximity}.");
       }
       else {
         // Grouping logic (e.g., multiple chairs)
@@ -53,14 +53,13 @@ class NaturalSpeechGenerator {
         }
         
         if (count > 1) {
-          parts.add("There are $count $label\s ${obj.direction}.");
+          parts.add("There are $count ${label}s, ${obj.proximity}.");
         } else {
-          parts.add("I notice a $label ${obj.direction}, ${obj.proximity}.");
+          parts.add("I notice a $label, ${obj.proximity}.");
         }
       }
       
       processedIndices.add(i);
-      // Increased limit slightly to tell more about the scene as requested
       if (parts.length >= 6) break; 
     }
 
@@ -82,7 +81,6 @@ class NaturalSpeechGenerator {
     bool isAbove = (a.y + a.height) < (b.y + (b.height * 0.95)); 
     bool surfaceCheck = b.width > (a.width * 0.4);
     
-    // Surfaces usually: table, chair, bed, counter
     bool isSurface = ['table', 'desk', 'chair', 'bed', 'sofa', 'couch', 'sink', 'refrigerator', 'microwave'].contains(b.label.toLowerCase());
     
     return horizontalOverlap && isAbove && surfaceCheck && isSurface;
@@ -100,12 +98,12 @@ class NaturalSpeechGenerator {
     return "";
   }
 
-  // Specialized search response
+  // Specialized search response - Removed direction for humanistic feedback
   static String generateSearchResponse(String target, List<DetectedObject> found) {
     if (found.isEmpty) {
       return "I'm sorry, I don't see any $target here right now.";
     }
     final obj = found.first;
-    return "Yes, I found the $target ${obj.direction}, ${obj.proximity}.";
+    return "Yes, I found the $target, ${obj.proximity}.";
   }
 }

@@ -191,11 +191,9 @@ class _WalkthroughScreenState extends State<WalkthroughScreen>
               children: [
                 const SizedBox(height: 24),
                 _buildHeader(),
-                const SizedBox(height: 20),
+                const SizedBox(height: 40), // Increased to compensate for removed progress
                 _buildOrb(),
-                const SizedBox(height: 18),
-                _buildStepDots(),
-                const SizedBox(height: 18),
+                const SizedBox(height: 40),
                 Expanded(child: _buildCard()),
                 const SizedBox(height: 20),
                 _buildNavRow(),
@@ -399,45 +397,6 @@ class _WalkthroughScreenState extends State<WalkthroughScreen>
     );
   }
 
-  // ── step dots ─────────────────────────────────────────────
-
-  Widget _buildStepDots() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(_steps.length, (i) {
-        final isActive = i == _cur;
-        final isDone = i < _cur;
-        return GestureDetector(
-          onTap: () => _jumpTo(i),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 350),
-            curve: Curves.easeOut,
-            margin: const EdgeInsets.symmetric(horizontal: 3),
-            width: isActive ? 36 : 24,
-            height: 3,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(2),
-              color: isActive
-                  ? _accent
-                  : isDone
-                      ? _accent.withOpacity(0.35)
-                      : Colors.white12,
-              boxShadow: isActive
-                  ? [
-                      BoxShadow(
-                        color: _accent.withOpacity(0.6),
-                        blurRadius: 6,
-                        spreadRadius: 1,
-                      )
-                    ]
-                  : [],
-            ),
-          ),
-        );
-      }),
-    );
-  }
-
   // ── card ──────────────────────────────────────────────────
 
   Widget _buildCard() {
@@ -496,27 +455,6 @@ class _WalkthroughScreenState extends State<WalkthroughScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // step label
-                      Row(
-                        children: [
-                          Text(
-                            "STEP ${(_cur + 1).toString().padLeft(2, '0')} OF ${_steps.length.toString().padLeft(2, '0')}",
-                            style: TextStyle(
-                              fontSize: 9,
-                              letterSpacing: 3,
-                              color: _accent.withOpacity(0.55),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Container(
-                              height: 1,
-                              color: Colors.white.withOpacity(0.05),
-                            ),
-                          ),
-                        ],
-                      ),
                       const SizedBox(height: 16),
                       // icon + heading
                       Row(

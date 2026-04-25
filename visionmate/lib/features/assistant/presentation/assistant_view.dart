@@ -133,18 +133,26 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
 
             SafeArea(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Column(
                   children: [
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     _buildHeader(state, themeColor),
-                    const Spacer(),
-                    _buildMainArea(state, themeColor),
-                    const Spacer(),
+                    Expanded(
+                      child: Center(
+                        child: SingleChildScrollView(
+                          physics: const BouncingScrollPhysics(),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 20),
+                            child: _buildMainArea(state, themeColor),
+                          ),
+                        ),
+                      ),
+                    ),
                     _buildTranscriptArea(state.currentText, themeColor, state.isSOSActive),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     _buildDynamicControlCenter(state, themeColor),
-                    const SizedBox(height: 40),
+                    const SizedBox(height: 32),
                   ],
                 ),
               ),
@@ -211,7 +219,7 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
           children: [
             const Text(
               "VISION MATE", 
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 6, color: Colors.white24)
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 5, color: Colors.white24)
             ),
             const SizedBox(height: 4),
             AnimatedContainer(
@@ -232,7 +240,7 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
   Widget _buildStatusBadge(AssistantState state, Color color) {
     String label = state.isSOSActive ? "SOS" : (state.isWalkthroughActive ? "GUIDE" : (state.view == AssistantUIState.camera ? "VISION" : (state.awake ? "ONLINE" : "STANDBY")));
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: color.withOpacity(0.08),
         borderRadius: BorderRadius.circular(20),
@@ -250,14 +258,65 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
   }
 
   Widget _buildMainArea(AssistantState state, Color color) {
-    if (state.isSOSActive) return _buildPulseVisual(Icons.warning_rounded, color);
+    if (state.isSOSActive) return _buildSOSDashboard(state, color);
     if (state.view == AssistantUIState.sleep) return _buildPulseVisual(Icons.nights_stay_rounded, color.withOpacity(0.3));
     if (state.isWalkthroughActive) return _buildWalkthroughStage(state, color);
     if (state.view == AssistantUIState.manual) return _buildSafetyVisual(state, color);
+    if (state.view == AssistantUIState.settings) return _buildSettingsDashboard(color);
     if (state.isOnlineWaiting) return _buildOnlineProcessingVisual(color);
     if (state.view == AssistantUIState.camera) return const SizedBox.shrink();
     
     return _buildCentralCore(color, state.awake, state.isSpeaking);
+  }
+
+  Widget _buildSOSDashboard(AssistantState state, Color color) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            _buildRipple(1.0, color.withOpacity(0.1)),
+            ScaleTransition(
+              scale: Tween(begin: 0.9, end: 1.1).animate(_pulseController),
+              child: Container(
+                height: 90, width: 90,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: color.withOpacity(0.1),
+                  border: Border.all(color: color, width: 2),
+                  boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 20)],
+                ),
+                child: Center(child: Icon(Icons.warning_rounded, size: 44, color: color)),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 32),
+        Text("EMERGENCY SYSTEM ACTIVE", style: TextStyle(color: color, fontWeight: FontWeight.w900, letterSpacing: 3, fontSize: 10)),
+        const SizedBox(height: 8),
+        Text("AWAITING YOUR RESPONSE", style: TextStyle(color: Colors.white24, fontWeight: FontWeight.bold, letterSpacing: 2, fontSize: 8)),
+        if (state.isWaitingForSOSAnythingElse) ...[
+          const SizedBox(height: 32),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(color: color.withOpacity(0.3)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.mic_rounded, size: 14, color: color),
+                const SizedBox(width: 10),
+                const Text("LISTENING...", style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 2)),
+              ],
+            ),
+          ),
+        ]
+      ],
+    );
   }
 
   Widget _buildOnlineProcessingVisual(Color color) {
@@ -267,37 +326,13 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
           alignment: Alignment.center,
           children: [
             SizedBox(
-              width: 140, height: 140,
+              width: 120, height: 120,
               child: CircularProgressIndicator(
                 valueColor: AlwaysStoppedAnimation<Color>(color.withOpacity(0.3)),
                 strokeWidth: 2,
               ),
             ),
-            AnimatedBuilder(
-              animation: _onlineProcessingController,
-              builder: (context, child) => Transform.rotate(
-                angle: _onlineProcessingController.value * 2 * 3.14159,
-                child: Container(
-                  width: 160, height: 160,
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        top: 0, left: 75,
-                        child: Container(
-                          width: 10, height: 10,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: color,
-                            boxShadow: [BoxShadow(color: color, blurRadius: 10, spreadRadius: 2)],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Icon(Icons.cloud_sync_rounded, size: 50, color: color),
+            Icon(Icons.cloud_sync_rounded, size: 40, color: color),
           ],
         ),
         const SizedBox(height: 32)
@@ -306,40 +341,20 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
   }
 
   Widget _buildWalkthroughStage(AssistantState state, Color color) {
-    IconData icon;
-    String actionHint;
+    IconData icon = Icons.auto_awesome_rounded;
+    String actionHint = "LEARNING...";
 
-    if (state.walkthroughStep <= 2) {
-      icon = Icons.touch_app_rounded;
-      actionHint = "TAP 3 TIMES";
-    } else if (state.walkthroughStep <= 4) {
-      icon = Icons.record_voice_over_rounded;
-      actionHint = "SAY 'HELLO'";
-    } else if (state.walkthroughStep <= 6) {
-      icon = Icons.touch_app_outlined;
-      actionHint = "TAP ONCE";
-    } else if (state.walkthroughStep <= 8) {
-      icon = Icons.swipe_down_rounded;
-      actionHint = "SWIPE DOWN";
-    } else {
-      icon = Icons.auto_awesome_rounded;
-      actionHint = "LEARNING...";
-    }
+    if (state.walkthroughStep <= 2) { icon = Icons.touch_app_rounded; actionHint = "TAP 3 TIMES"; }
+    else if (state.walkthroughStep <= 4) { icon = Icons.record_voice_over_rounded; actionHint = "SAY 'HELLO'"; }
+    else if (state.walkthroughStep <= 6) { icon = Icons.touch_app_outlined; actionHint = "TAP ONCE"; }
+    else if (state.walkthroughStep <= 8) { icon = Icons.swipe_down_rounded; actionHint = "SWIPE DOWN"; }
 
     return Column(
       children: [
         Stack(
           alignment: Alignment.center,
           children: [
-             _buildRipple(1.3, color.withOpacity(0.05)),
-             RotationTransition(
-               turns: _orbitRotationController,
-               child: Container(
-                 width: 180, height: 180,
-                 decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: color.withOpacity(0.1))),
-                 child: Stack(children: [Positioned(top: 0, left: 88, child: _orbitDot(color, 8, true))]),
-               ),
-             ),
+             _buildRipple(1.2, color.withOpacity(0.05)),
              Container(
                width: 100, height: 100,
                decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: color.withOpacity(0.4), width: 2)),
@@ -362,7 +377,7 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
       scale: Tween(begin: 0.95, end: 1.05).animate(_pulseController),
       child: Column(
         children: [
-          Icon(icon, size: 80, color: color),
+          Icon(icon, size: 70, color: color),
           const SizedBox(height: 20),
           Text("SYSTEM ACTIVE", style: TextStyle(color: color, fontWeight: FontWeight.bold, letterSpacing: 4, fontSize: 10)),
         ],
@@ -374,62 +389,49 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
     return Stack(
       alignment: Alignment.center,
       children: [
-        if (awake) ...[
-          _buildRipple(1.2, color.withOpacity(0.05)),
-          _buildRipple(1.5, color.withOpacity(0.02)),
-        ],
+        if (awake) _buildRipple(1.2, color.withOpacity(0.05)),
         RotationTransition(
           turns: _orbitRotationController,
           child: Container(
-            height: 210, width: 210,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: color.withOpacity(awake ? 0.08 : 0.02), width: 0.5),
-            ),
-            child: Stack(
-              children: [
-                Positioned(top: 15, left: 105, child: _orbitDot(color, 6, awake)),
-              ],
-            ),
-          ),
-        ),
-        RotationTransition(
-          turns: _rotationController,
-          child: Container(
-            height: 170, width: 170,
-            decoration: awake ? BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: SweepGradient(colors: [color.withOpacity(0), color, color.withOpacity(0)]),
-            ) : BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: color.withOpacity(0.1), width: 1.5),
-            ),
-            child: !awake ? Stack(
-              children: [
-                Positioned(bottom: 10, right: 85, child: _orbitDot(color, 4, awake)),
-              ],
-            ) : null,
+            height: 190, width: 190,
+            decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: color.withOpacity(awake ? 0.08 : 0.02))),
+            child: Stack(children: [Positioned(top: 15, left: 95, child: _orbitDot(color, 6, awake))]),
           ),
         ),
         AnimatedContainer(
           duration: const Duration(milliseconds: 500),
-          height: 115, width: 115,
+          height: 110, width: 110,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: const Color(0xFF05050A),
-            border: Border.all(color: color.withOpacity(awake ? 0.8 : 0.15), width: 2.5),
-            boxShadow: [
-              if (awake) BoxShadow(color: color.withOpacity(0.4), blurRadius: 25 + (_orbController.value * 10), spreadRadius: 2)
-            ],
+            border: Border.all(color: color.withOpacity(awake ? 0.8 : 0.15), width: 2),
+            boxShadow: [if (awake) BoxShadow(color: color.withOpacity(0.4), blurRadius: 20 + (_orbController.value * 10))],
           ),
           child: Center(
-            child: Icon(
-              isSpeaking ? Icons.graphic_eq_rounded : (awake ? Icons.graphic_eq_rounded : Icons.mic_none_rounded),
-              size: 44,
-              color: awake ? Colors.white : Colors.white12,
-            ),
+            child: Icon(isSpeaking || awake ? Icons.graphic_eq_rounded : Icons.mic_none_rounded, size: 40, color: awake ? Colors.white : Colors.white12),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildSettingsDashboard(Color color) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          height: 70, width: 70,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: color.withOpacity(0.4)),
+            boxShadow: [BoxShadow(color: color.withOpacity(0.1), blurRadius: 15)],
+          ),
+          child: Center(child: Icon(Icons.settings_suggest_rounded, size: 28, color: color)),
+        ),
+        const SizedBox(height: 24),
+        Text("NEURAL CALIBRATION", style: TextStyle(color: color, fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 9)),
+        const SizedBox(height: 24),
+        _buildSettingsHUD(color),
       ],
     );
   }
@@ -451,11 +453,8 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
       builder: (context, child) => Transform.scale(
         scale: scale + (_orbController.value * 0.1),
         child: Container(
-          height: 160, width: 160,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: color, width: 2),
-          ),
+          height: 150, width: 150,
+          decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: color, width: 1.5)),
         ),
       ),
     );
@@ -463,103 +462,51 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
 
   Widget _buildSafetyVisual(AssistantState state, Color color) {
     final settings = ref.watch(settingsRepositoryProvider);
-    bool hasPrimary = settings.primaryContactNumber.isNotEmpty;
-    bool hasSecondary = settings.secondaryContactNumber.isNotEmpty;
     
+    // Priority Logic: Show temp values during setup, else saved ones
+    final pName = (state.isSettingUpEmergency && state.tempPName.isNotEmpty) ? state.tempPName : settings.primaryContactName;
+    final pNum = (state.isSettingUpEmergency && state.tempPNum.isNotEmpty) ? state.tempPNum : settings.primaryContactNumber;
+    
+    final sName = (state.isSettingUpEmergency && state.tempSName.isNotEmpty) ? state.tempSName : settings.secondaryContactName;
+    final sNum = (state.isSettingUpEmergency && state.tempSNum.isNotEmpty) ? state.tempSNum : settings.secondaryContactNumber;
+
     return Column(
       children: [
-        Stack(
-          alignment: Alignment.center,
-          children: [
-            Container(
-              height: 120, width: 120,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(colors: [color.withOpacity(0.2), Colors.transparent]),
-              ),
-            ),
-            Icon(Icons.shield_rounded, size: 70, color: color),
-            if (state.isSettingUpEmergency)
-              SizedBox(
-                height: 100, width: 100,
-                child: CircularProgressIndicator(
-                  value: (state.setupStep + 1) / 5,
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(color),
-                ),
-              ),
-          ],
-        ),
+        Icon(Icons.shield_rounded, size: 60, color: color),
+        const SizedBox(height: 20),
+        Text(state.isSettingUpEmergency ? "SECURITY CONFIGURATION" : "EMERGENCY CONTACTS", style: TextStyle(color: color, fontWeight: FontWeight.w900, letterSpacing: 3, fontSize: 9)),
         const SizedBox(height: 24),
-        Text(
-          state.isSettingUpEmergency ? "SECURITY CONFIGURATION" : "EMERGENCY CONTACTS", 
-          style: TextStyle(color: color, fontWeight: FontWeight.w900, letterSpacing: 4, fontSize: 10)
-        ),
-        const SizedBox(height: 32),
-        _buildContactCard("PRIMARY", settings.primaryContactName, settings.primaryContactNumber, hasPrimary, color),
-        const SizedBox(height: 16),
-        _buildContactCard("SECONDARY", settings.secondaryContactName, settings.secondaryContactNumber, hasSecondary, color),
-        const SizedBox(height: 32),
-        if (state.isSettingUpEmergency)
-           Container(
-             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-             decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-             child: Text(
-               "STEP ${state.setupStep + 1} OF 5",
-               style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 2)
-             ),
-           ),
+        _buildContactCard("PRIMARY", pName, pNum, pNum.isNotEmpty, color),
+        const SizedBox(height: 12),
+        _buildContactCard("SECONDARY", sName, sNum, sNum.isNotEmpty, color),
       ],
     );
   }
 
   Widget _buildContactCard(String label, String name, String number, bool active, Color color) {
-    String displayNum = number.length > 4 ? "XXXX XXX ${number.substring(number.length - 3)}" : "UNSET";
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 500),
-          width: 300,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: active ? Colors.white.withOpacity(0.06) : Colors.white.withOpacity(0.02),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: active ? color.withOpacity(0.4) : Colors.white10, width: 1),
-            boxShadow: [
-              if (active) BoxShadow(color: color.withOpacity(0.05), blurRadius: 20, spreadRadius: -5)
-            ],
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(active ? 0.06 : 0.02),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: active ? color.withOpacity(0.3) : Colors.white10),
+      ),
+      child: Row(
+        children: [
+          Icon(active ? Icons.verified_user_rounded : Icons.person_outline_rounded, size: 20, color: active ? color : Colors.white12),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(color: active ? color : Colors.white12, fontSize: 7, fontWeight: FontWeight.w900, letterSpacing: 2)),
+                Text(active ? name.toUpperCase() : "NO CONTACT", style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+              ],
+            ),
           ),
-          child: Row(
-            children: [
-              Container(
-                height: 48, width: 48,
-                decoration: BoxDecoration(
-                  color: active ? color.withOpacity(0.15) : Colors.white.withOpacity(0.05),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(active ? Icons.verified_user_rounded : Icons.person_outline_rounded, size: 22, color: active ? color : Colors.white24),
-              ),
-              const SizedBox(width: 20),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label, style: TextStyle(color: active ? color : Colors.white24, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 2)),
-                    const SizedBox(height: 4),
-                    Text(active ? name.toUpperCase() : "NO CONTACT", style: TextStyle(color: active ? Colors.white : Colors.white12, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1)),
-                    if (active) ...[
-                      const SizedBox(height: 4),
-                      Text(displayNum, style: TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.w500, letterSpacing: 1)),
-                    ],
-                  ],
-                ),
-              ),
-              if (active) Icon(Icons.check_circle_outline_rounded, size: 18, color: color.withOpacity(0.6)),
-            ],
-          ),
-        ),
+          if (active) Icon(Icons.check_circle_outline_rounded, size: 16, color: color.withOpacity(0.5)),
+        ],
       ),
     );
   }
@@ -568,163 +515,85 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 300),
       opacity: text.isEmpty ? 0 : 1,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.4),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: color.withOpacity(0.2)),
-            ),
-            child: Text(
-              text.toUpperCase(),
-              textAlign: TextAlign.center,
-              style: TextStyle(color: isSOS ? Colors.redAccent : Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.2, fontSize: 11, height: 1.5),
-            ),
-          ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.4),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: color.withOpacity(0.1)),
+        ),
+        child: Text(
+          text.toUpperCase(),
+          textAlign: TextAlign.center,
+          style: TextStyle(color: isSOS ? Colors.redAccent : Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1, fontSize: 10, height: 1.4),
         ),
       ),
     );
   }
 
   Widget _buildDynamicControlCenter(AssistantState state, Color color) {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 400),
-      child: _getControlContent(state, color),
-    );
+    return AnimatedSwitcher(duration: const Duration(milliseconds: 400), child: _getControlContent(state, color));
   }
 
   Widget _getControlContent(AssistantState state, Color color) {
     if (state.isWalkthroughActive) return _buildWalkthroughInfo(state, color);
-
     switch (state.view) {
-      case AssistantUIState.time:
-        return _buildLargeStatus(DateFormat('h:mm').format(DateTime.now()), DateFormat('EEEE, MMM d').format(DateTime.now()).toUpperCase(), color);
-      case AssistantUIState.battery:
-        return _buildLargeStatus("${state.batteryLevel}%", state.isCharging ? "CHARGING" : "SYSTEM POWER", color);
-      case AssistantUIState.date:
-        return _buildLargeStatus(DateFormat('dd').format(DateTime.now()), DateFormat('MMMM yyyy').format(DateTime.now()).toUpperCase(), color);
-      case AssistantUIState.settings:
-        return _buildSettingsHUD(color);
-      default:
-        return _buildDefaultStatus(state, color);
+      case AssistantUIState.time: return _buildLargeStatus(DateFormat('h:mm').format(DateTime.now()), DateFormat('EEEE, MMM d').format(DateTime.now()).toUpperCase(), color);
+      case AssistantUIState.battery: return _buildLargeStatus("${state.batteryLevel}%", state.isCharging ? "CHARGING" : "SYSTEM POWER", color);
+      case AssistantUIState.date: return _buildLargeStatus(DateFormat('dd').format(DateTime.now()), DateFormat('MMMM yyyy').format(DateTime.now()).toUpperCase(), color);
+      case AssistantUIState.settings: return const SizedBox.shrink();
+      default: return _buildDefaultStatus(state, color);
     }
   }
 
   Widget _buildDefaultStatus(AssistantState state, Color color) {
-    if (state.currentText.toLowerCase().contains("weather")) {
-      return _buildWeatherInfo(color);
-    }
-    if (state.currentText.toLowerCase().contains("news")) {
-      return _buildNewsInfo(color);
-    }
+    if (state.currentText.toLowerCase().contains("weather")) return _buildWeatherInfo(color);
+    if (state.currentText.toLowerCase().contains("news")) return _buildNewsInfo(color);
     return Column(
       children: [
-        const Text("SAY 'HELLO'", style: TextStyle(color: Colors.white12, letterSpacing: 8, fontSize: 10, fontWeight: FontWeight.w900)),
-        const SizedBox(height: 24),
+        const Text("SAY 'HELLO'", style: TextStyle(color: Colors.white12, letterSpacing: 8, fontSize: 9, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 20),
         _buildGuideButton(color),
       ],
     );
   }
 
   Widget _buildWeatherInfo(Color color) {
-    return Column(
-      key: const ValueKey("weather_info"),
-      children: [
-        Icon(Icons.wb_sunny_rounded, color: color, size: 40),
-        const SizedBox(height: 12),
-        const Text("METEO SERVICES", style: TextStyle(color: Colors.white24, fontSize: 8, letterSpacing: 3, fontWeight: FontWeight.bold)),
-      ],
-    );
+    return Column(key: const ValueKey("weather_info"), children: [Icon(Icons.wb_sunny_rounded, color: color, size: 36), const SizedBox(height: 12), const Text("METEO SERVICES", style: TextStyle(color: Colors.white24, fontSize: 8, letterSpacing: 3, fontWeight: FontWeight.bold))]);
   }
 
   Widget _buildNewsInfo(Color color) {
-    return Column(
-      key: const ValueKey("news_info"),
-      children: [
-        Icon(Icons.newspaper_rounded, color: color, size: 40),
-        const SizedBox(height: 12),
-        const Text("GLOBAL HEADLINES", style: TextStyle(color: Colors.white24, fontSize: 8, letterSpacing: 3, fontWeight: FontWeight.bold)),
-      ],
-    );
+    return Column(key: const ValueKey("news_info"), children: [Icon(Icons.newspaper_rounded, color: color, size: 36), const SizedBox(height: 12), const Text("GLOBAL HEADLINES", style: TextStyle(color: Colors.white24, fontSize: 8, letterSpacing: 3, fontWeight: FontWeight.bold))]);
   }
 
   Widget _buildWalkthroughInfo(AssistantState state, Color color) {
     return Column(
       key: ValueKey("walkthrough_${state.walkthroughStep}"),
       children: [
-        Text(
-          "STEP ${state.walkthroughStep + 1} / 17", 
-          style: TextStyle(color: color.withOpacity(0.4), fontWeight: FontWeight.w800, fontSize: 8, letterSpacing: 2)
-        ),
-        const SizedBox(height: 12),
-        Container(
-          width: 200, height: 2,
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(1)),
-          child: FractionallySizedBox(
-            alignment: Alignment.centerLeft,
-            widthFactor: (state.walkthroughStep + 1) / 17,
-            child: Container(color: color),
-          ),
-        ),
         const SizedBox(height: 16),
-        Text(
-          state.isWaitingForAction ? "AWAITING ACTION" : "LISTENING TO GUIDE", 
-          style: TextStyle(color: color.withOpacity(0.4), fontWeight: FontWeight.bold, fontSize: 9, letterSpacing: 2)
-        ),
+        Text(state.isWaitingForAction ? "AWAITING ACTION" : "LISTENING TO GUIDE", style: TextStyle(color: color.withOpacity(0.4), fontWeight: FontWeight.bold, fontSize: 9, letterSpacing: 2)),
       ],
     );
   }
 
   Widget _buildLargeStatus(String main, String sub, Color color) {
-    return Column(
-      key: ValueKey(main),
-      children: [
-        Text(main, style: const TextStyle(fontSize: 60, fontWeight: FontWeight.w100, color: Colors.white, letterSpacing: -2)),
-        Text(sub, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 4, color: color)),
-      ],
-    );
+    return Column(key: ValueKey(main), children: [Text(main, style: const TextStyle(fontSize: 54, fontWeight: FontWeight.w100, color: Colors.white, letterSpacing: -2)), Text(sub, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 4, color: color))]);
   }
 
   Widget _buildSettingsHUD(Color color) {
     final settings = ref.watch(settingsRepositoryProvider);
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white.withOpacity(0.06)),
-      ),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.04), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withOpacity(0.06))),
       child: Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text("VOICE ENGINE", style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 4)),
-                  const SizedBox(height: 4),
-                  Text("CONFIGURATION HUD", style: TextStyle(color: Colors.white24, fontSize: 7, fontWeight: FontWeight.bold, letterSpacing: 2)),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
-                child: Icon(Icons.tune_rounded, size: 16, color: color),
-              ),
-            ],
-          ),
-          const SizedBox(height: 32),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("ENGINE CONFIG", style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 3)), Icon(Icons.tune_rounded, size: 14, color: color.withOpacity(0.5))]),
+          const SizedBox(height: 24),
           Row(
             children: [
-              Expanded(child: _hudItem(Icons.speed_rounded, "SPEECH RATE", settings.speechRate, (settings.speechRate * 2).toStringAsFixed(1), color)),
-              Container(width: 1, height: 60, color: Colors.white.withOpacity(0.05), margin: const EdgeInsets.symmetric(horizontal: 10)),
-              Expanded(child: _hudItem(Icons.waves_rounded, "VOICE PITCH", (settings.pitch - 0.5) / 1.5, settings.pitch.toStringAsFixed(1), color)),
+              Expanded(child: _hudItem(Icons.speed_rounded, "RATE", settings.speechRate, (settings.speechRate * 2).toStringAsFixed(1), color)),
+              Container(width: 1, height: 50, color: Colors.white.withOpacity(0.05), margin: const EdgeInsets.symmetric(horizontal: 10)),
+              Expanded(child: _hudItem(Icons.waves_rounded, "PITCH", (settings.pitch - 0.5) / 1.5, settings.pitch.toStringAsFixed(1), color)),
             ],
           ),
         ],
@@ -735,21 +604,12 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
   Widget _hudItem(IconData icon, String label, double progress, String val, Color color) {
     return Column(
       children: [
-        Icon(icon, size: 14, color: Colors.white24),
-        const SizedBox(height: 10),
+        Icon(icon, size: 12, color: Colors.white24),
+        const SizedBox(height: 8),
         Text(label, style: const TextStyle(color: Colors.white24, fontSize: 7, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
-        const SizedBox(height: 12),
-        Text(val, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w200, letterSpacing: -1)),
-        const SizedBox(height: 12),
-        SizedBox(
-          width: 60,
-          child: LinearProgressIndicator(
-            value: progress.clamp(0.0, 1.0),
-            backgroundColor: Colors.white.withOpacity(0.05),
-            valueColor: AlwaysStoppedAnimation<Color>(color.withOpacity(0.6)),
-            minHeight: 2,
-          ),
-        ),
+        Text(val, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w200, letterSpacing: -1)),
+        const SizedBox(height: 8),
+        SizedBox(width: 50, child: LinearProgressIndicator(value: progress.clamp(0.0, 1.0), backgroundColor: Colors.white.withOpacity(0.05), valueColor: AlwaysStoppedAnimation<Color>(color.withOpacity(0.6)), minHeight: 1.5)),
       ],
     );
   }
@@ -758,20 +618,9 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
     return GestureDetector(
       onTap: () => ref.read(assistantViewModelProvider.notifier).handleIntent(VoiceIntent.openWalkthrough, "user guide"),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.03),
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: Colors.white.withOpacity(0.08)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.menu_book_rounded, size: 14, color: color),
-            const SizedBox(width: 12),
-            Text("USER GUIDE", style: TextStyle(color: color.withOpacity(0.7), fontSize: 9, letterSpacing: 2, fontWeight: FontWeight.bold)),
-          ],
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), borderRadius: BorderRadius.circular(30), border: Border.all(color: Colors.white.withOpacity(0.08))),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.menu_book_rounded, size: 12, color: color), const SizedBox(width: 10), Text("USER GUIDE", style: TextStyle(color: color.withOpacity(0.7), fontSize: 8, letterSpacing: 2, fontWeight: FontWeight.bold))]),
       ),
     );
   }
@@ -779,25 +628,13 @@ class _AssistantViewState extends ConsumerState<AssistantView> with TickerProvid
   Widget _buildCameraOverlay(Color color) {
     return Stack(
       children: [
-        Positioned.fill(
-          child: Opacity(
-            opacity: 0.05,
-            child: CustomPaint(painter: GridHUDPainter()),
-          ),
-        ),
+        Positioned.fill(child: Opacity(opacity: 0.05, child: CustomPaint(painter: GridHUDPainter()))),
         AnimatedBuilder(
           animation: _scannerController,
           builder: (context, child) => Positioned(
-            top: MediaQuery.of(context).size.height * 0.2 + 
-                 (MediaQuery.of(context).size.height * 0.6 * _scannerController.value),
+            top: MediaQuery.of(context).size.height * 0.2 + (MediaQuery.of(context).size.height * 0.6 * _scannerController.value),
             left: 50, right: 50,
-            child: Container(
-              height: 1,
-              decoration: BoxDecoration(
-                color: color,
-                boxShadow: [BoxShadow(color: color.withOpacity(0.5), blurRadius: 10, spreadRadius: 1)],
-              ),
-            ),
+            child: Container(height: 1, decoration: BoxDecoration(color: color, boxShadow: [BoxShadow(color: color.withOpacity(0.5), blurRadius: 10, spreadRadius: 1)])),
           ),
         ),
       ],

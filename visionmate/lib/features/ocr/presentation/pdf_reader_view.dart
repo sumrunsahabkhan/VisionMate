@@ -12,9 +12,11 @@ class PdfReaderView extends ConsumerStatefulWidget {
   ConsumerState<PdfReaderView> createState() => _PdfReaderViewState();
 }
 
-class _PdfReaderViewState extends ConsumerState<PdfReaderView> {
+class _PdfReaderViewState extends ConsumerState<PdfReaderView> with TickerProviderStateMixin {
   StreamSubscription? _voskSubscription;
   Timer? _reminderTimer;
+  late AnimationController _pulseController;
+  
   bool _isAwaitingDecision = false;
   bool _isReadingText = false;
   bool _isPaused = false;
@@ -27,6 +29,11 @@ class _PdfReaderViewState extends ConsumerState<PdfReaderView> {
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: true);
+
     Future.microtask(() => _initPdfReader());
   }
 
@@ -97,8 +104,6 @@ class _PdfReaderViewState extends ConsumerState<PdfReaderView> {
       if (DateTime.now().difference(_lastCommandTime).inMilliseconds < 800) return;
       _lastCommandTime = DateTime.now();
 
-      debugPrint("PDF Command: $text");
-      
       if (text.contains("exit") || text.contains("back") || text.contains("stop")) {
         _handleExit();
         return;
@@ -188,7 +193,6 @@ class _PdfReaderViewState extends ConsumerState<PdfReaderView> {
     await viewModel.readPdf(viewModel.selectedFile!.path);
     
     if (mounted && viewModel.detectedText.isNotEmpty) {
-      // 🔥 WORD TRACKING LOGIC: Split by words
       _words = viewModel.detectedText.split(RegExp(r'\s+')).where((w) => w.trim().isNotEmpty).toList();
       _currentWordIndex = 0;
       _shouldStopReading = false;
@@ -207,11 +211,9 @@ class _PdfReaderViewState extends ConsumerState<PdfReaderView> {
     }
   }
 
-  // 🔥 CORE FIX: WORD-BY-WORD LOOP
   Future<void> _startWordReadingLoop() async {
     final tts = ref.read(ttsServiceProvider);
     
-    // We read in chunks of 5 words for natural flow but keep tracking precise
     while (_currentWordIndex < _words.length && _isReadingText && !_shouldStopReading) {
       int end = (_currentWordIndex + 10 < _words.length) ? _currentWordIndex + 10 : _words.length;
       String chunk = _words.sublist(_currentWordIndex, end).join(" ");
@@ -260,76 +262,222 @@ class _PdfReaderViewState extends ConsumerState<PdfReaderView> {
   }
 
   @override
-  void dispose() { _cleanup(); super.dispose(); }
+  void dispose() { 
+    _cleanup(); 
+    _pulseController.dispose();
+    super.dispose(); 
+  }
 
   @override
   Widget build(BuildContext context) {
-    final ocrState = ref.watch(ocrViewModelProvider);
+    final viewModel = ref.watch(ocrViewModelProvider);
+    const accentColor = Colors.orangeAccent;
+
     return Scaffold(
       backgroundColor: const Color(0xFF05050A),
-      appBar: AppBar(
-        title: const Text("PDF READER", style: TextStyle(letterSpacing: 2, fontWeight: FontWeight.bold, color: Colors.white)),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white), onPressed: _handleExit),
-      ),
-      body: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onDoubleTap: _pauseReadingManually, 
-        child: Container(
-          decoration: BoxDecoration(gradient: RadialGradient(center: Alignment.topCenter, radius: 1.5, colors: [Colors.orangeAccent.withOpacity(0.05), Colors.transparent])),
-          child: Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              children: [
-                if (ocrState.isSearchingFiles) const Expanded(child: Center(child: CircularProgressIndicator(color: Colors.orangeAccent)))
-                else if (ocrState.pdfFiles.isEmpty) const Expanded(child: Center(child: Text("NO PDF FILES FOUND", style: TextStyle(color: Colors.white54, fontSize: 16))))
-                else ...[
-                  Text(
-                    _isReadingText ? "READING (DOUBLE TAP TO PAUSE)" : (_isPaused ? "PAUSED - SAY 'RESUME' OR 'EXIT'" : (_isAwaitingDecision ? "SAY 'ANOTHER' OR 'EXIT'" : "SAY 'NEXT', 'PREVIOUS', 'READ' OR 'EXIT'")),
-                    style: const TextStyle(color: Colors.orangeAccent, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 4),
+      body: Stack(
+        children: [
+          // Background Glow
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _pulseController,
+              builder: (context, child) => Container(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment.topCenter,
+                    radius: 1.5,
+                    colors: [accentColor.withOpacity(0.05), Colors.transparent],
                   ),
-                  const SizedBox(height: 20),
-                  Expanded(
-                    flex: ocrState.detectedText.isEmpty ? 4 : 1,
-                    child: ListView.builder(
-                      itemCount: ocrState.pdfFiles.length,
-                      itemBuilder: (context, index) {
-                        final isSelected = ocrState.selectedIndex == index;
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          decoration: BoxDecoration(color: isSelected ? Colors.orangeAccent.withOpacity(0.1) : Colors.white.withOpacity(0.03), borderRadius: BorderRadius.circular(20), border: Border.all(color: isSelected ? Colors.orangeAccent : Colors.white10, width: 2)),
-                          child: ListTile(
-                            leading: Icon(Icons.picture_as_pdf, color: isSelected ? Colors.orangeAccent : Colors.white38),
-                            title: Text(ocrState.pdfFiles[index].path.split('/').last, style: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontSize: 16)),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-                if (ocrState.detectedText.isNotEmpty)
-                  Expanded(
-                    flex: 3,
-                    child: Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(top: 20),
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(25), border: Border.all(color: Colors.orangeAccent.withOpacity(0.3))),
-                      child: SingleChildScrollView(child: Text(ocrState.detectedText, style: const TextStyle(color: Colors.white, fontSize: 17, height: 1.6))),
-                    ),
-                  ),
-                const SizedBox(height: 20),
-                if (ocrState.pdfFiles.isNotEmpty && !ocrState.isProcessing && !_isAwaitingDecision && !_isReadingText && !_isPaused)
-                  ElevatedButton(
-                    onPressed: _readSelectedPdf,
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent, foregroundColor: Colors.black, minimumSize: const Size(double.infinity, 70), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(35))),
-                    child: const Text("READ SELECTED FILE", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
-                  ),
-              ],
+                ),
+              ),
             ),
           ),
+
+          SafeArea(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onDoubleTap: _pauseReadingManually, 
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 20),
+                    _buildHeader(accentColor),
+                    const SizedBox(height: 20),
+                    _buildStatusBadge(accentColor),
+                    const SizedBox(height: 20),
+                    
+                    if (viewModel.isSearchingFiles) 
+                      const Expanded(child: Center(child: CircularProgressIndicator(color: accentColor, strokeWidth: 2)))
+                    else if (viewModel.pdfFiles.isEmpty) 
+                      const Expanded(child: Center(child: Text("NO DOCUMENTS FOUND", style: TextStyle(color: Colors.white24, letterSpacing: 2, fontWeight: FontWeight.bold))))
+                    else ...[
+                      Expanded(
+                        flex: viewModel.detectedText.isEmpty ? 4 : 1,
+                        child: _buildFileList(viewModel, accentColor),
+                      ),
+                    ],
+
+                    if (viewModel.detectedText.isNotEmpty)
+                      Expanded(
+                        flex: 3,
+                        child: _buildTextContent(viewModel.detectedText, accentColor),
+                      ),
+
+                    const SizedBox(height: 20),
+                    if (viewModel.pdfFiles.isNotEmpty && !viewModel.isProcessing && !_isAwaitingDecision && !_isReadingText && !_isPaused)
+                      _buildReadButton(accentColor),
+                    
+                    const SizedBox(height: 10),
+                    _buildExitLink(),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader(Color color) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white38, size: 20),
+          onPressed: _handleExit,
         ),
+        Column(
+          children: [
+            const Text("DOCUMENT READER", style: TextStyle(color: Colors.white24, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 4)),
+            const SizedBox(height: 4),
+            Container(width: 30, height: 2, color: color),
+          ],
+        ),
+        const SizedBox(width: 48), // Spacer for balance
+      ],
+    );
+  }
+
+  Widget _buildStatusBadge(Color color) {
+    String label = "SELECT A FILE";
+    if (_isReadingText) label = "READING...";
+    else if (_isPaused) label = "PAUSED";
+    else if (_isAwaitingDecision) label = "FINISHED";
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.1)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_isReadingText)
+            const Padding(
+              padding: EdgeInsets.only(right: 10),
+              child: SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orangeAccent)),
+            ),
+          Text(label, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 2)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFileList(OCRViewModel viewModel, Color color) {
+    return ListView.builder(
+      physics: const BouncingScrollPhysics(),
+      itemCount: viewModel.pdfFiles.length,
+      itemBuilder: (context, index) {
+        final isSelected = viewModel.selectedIndex == index;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: isSelected ? color.withOpacity(0.1) : Colors.white.withOpacity(0.02),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: isSelected ? color.withOpacity(0.5) : Colors.white10),
+          ),
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+            leading: Icon(Icons.picture_as_pdf_rounded, color: isSelected ? color : Colors.white24),
+            title: Text(
+              viewModel.pdfFiles[index].path.split('/').last,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: isSelected ? Colors.white : Colors.white60, fontSize: 14, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
+            ),
+            trailing: isSelected ? Icon(Icons.chevron_right_rounded, color: color) : null,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTextContent(String text, Color color) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.1)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(Icons.notes_rounded, size: 14, color: color.withOpacity(0.5)),
+              const SizedBox(width: 8),
+              Text("EXTRACTED TEXT", style: TextStyle(color: color.withOpacity(0.5), fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 2)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Text(
+                text,
+                style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.6),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReadButton(Color color) {
+    return GestureDetector(
+      onTap: _readSelectedPdf,
+      child: Container(
+        height: 65,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 5))],
+        ),
+        child: const Center(
+          child: Text(
+            "READ SELECTED",
+            style: TextStyle(color: Colors.black, fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 2),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExitLink() {
+    return TextButton(
+      onPressed: _handleExit,
+      child: const Text(
+        "GO BACK",
+        style: TextStyle(color: Colors.white24, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 4),
       ),
     );
   }
