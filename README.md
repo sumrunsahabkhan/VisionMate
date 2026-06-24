@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="VisionMate Logo" width="120" height="120" />
+<img src="app/assets/app_icon.png" alt="VisionMate Logo" width="120" height="120" />
 
 # VisionMate
 
@@ -10,7 +10,7 @@
 ![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=flat&logo=kotlin&logoColor=white)
 ![TensorFlow](https://img.shields.io/badge/TensorFlow_Lite-FF6F00?style=flat&logo=tensorflow&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat&logo=node.js&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-green)
+
 
 </div>
 
